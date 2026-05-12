@@ -10,7 +10,23 @@ Store via Capacitor.
 
 ---
 
-## ⚡ Démarrer en local
+## ⚡ Démarrer
+
+### Option A · GitHub Codespaces (recommandé · zéro install)
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/goilardkillian-boop/mon-smv)
+
+1. Clique sur le badge ↑ (ou **Code › Codespaces › Create codespace on main**).
+2. Attends ~30 s que le devcontainer démarre.
+3. Le serveur HTTP démarre tout seul sur le port `8080`. Un onglet "Simple Browser"
+   s'ouvre automatiquement avec l'app.
+4. Pour la voir au format mobile : clique sur l'icône **« Open in Browser »**
+   en haut à droite de l'onglet Ports, puis dans Chrome ouvre les DevTools
+   (`F12`) et active le **mode responsive** (`Ctrl+Shift+M` / `Cmd+Shift+M`).
+
+> Toute modification de fichier est instantanée — recharge l'onglet pour la voir.
+
+### Option B · En local
 
 Aucune build, aucune dépendance.
 
