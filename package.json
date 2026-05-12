@@ -1,0 +1,12 @@
+{
+  "name": "mon-smv",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mon SMV · application du 3ᵉ RSMV (La Rochelle, caserne Beauregard).",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "serve": "npx --yes serve@latest .",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "license": "MIT"
+}
