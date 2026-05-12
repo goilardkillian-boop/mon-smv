@@ -30,6 +30,8 @@ const DEFAULT_DB = () => {
   const d = {};
   COLLECTIONS.forEach((c) => { d[c] = []; });
   d.settings = {
+    logoUrl: '',                          // URL ou data:URL (vide = logo par défaut SVG)
+    applicationName: 'Mon SMV',
     candidatureEmail: 'recrutement.3rsmv@defense.gouv.fr',
     candidaturePhone: '05 46 00 00 00',
     signalementEmail: 'moderation.3rsmv@defense.gouv.fr',
@@ -123,15 +125,49 @@ function getSessionUserId() {
   } catch { return null; }
 }
 
-function logAudit(coll, action, entityId) {
+function logAudit(coll, action, entityId, description = null) {
   _db.auditLog = _db.auditLog || [];
   _db.auditLog.unshift({
     id: uid('log'),
     at: new Date().toISOString(),
     coll, action, entityId,
+    description: description || autoDescription(coll, action, entityId),
     by: getSessionUserId(),
   });
   if (_db.auditLog.length > 500) _db.auditLog.length = 500;
+}
+
+function autoDescription(coll, action, entityId) {
+  const verb = { insert: 'a créé', update: 'a modifié', remove: 'a supprimé', set: 'a configuré' }[action] || action;
+  const labels = {
+    users: 'un utilisateur',
+    sections: 'une section',
+    incorporations: 'une incorporation',
+    formations: 'une formation',
+    candidatures: 'une candidature',
+    invitations: 'une invitation famille',
+    events: 'un événement',
+    news: 'une actualité',
+    jobs: "une offre d'emploi",
+    notes: 'une note',
+    messages: 'un message',
+    settings: 'les paramètres',
+  };
+  return `${verb} ${labels[coll] || coll}`;
+}
+
+// API publique pour logger une action métier (login, reset password...)
+export function logAction(description, coll = 'system', entityId = null) {
+  _db.auditLog = _db.auditLog || [];
+  _db.auditLog.unshift({
+    id: uid('log'),
+    at: new Date().toISOString(),
+    coll, action: 'event', entityId, description,
+    by: getSessionUserId(),
+  });
+  if (_db.auditLog.length > 500) _db.auditLog.length = 500;
+  write(_db);
+  notify();
 }
 
 /* -------------------- Backups (12 slots) -------------------- */
@@ -195,3 +231,8 @@ export function uid(prefix = 'id') {
 const listeners = new Set();
 export function onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 function notify() { for (const l of listeners) try { l(); } catch {} }
+
+/* -------------------- Logo helper -------------------- */
+export function getLogoUrl() {
+  return (_db.settings && _db.settings.logoUrl) || './assets/img/logo.svg';
+}

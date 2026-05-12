@@ -9,7 +9,7 @@
 
 import { ICONS } from './icons.js';
 import {
-  db, getBackups, restoreBackup, backupNow, deleteBackup, tickAutoBackup, onChange, uid,
+  db, getBackups, restoreBackup, backupNow, deleteBackup, tickAutoBackup, onChange, uid, getLogoUrl, logAction,
 } from './db.js';
 import {
   createUser, login as authLogin, logout as authLogout, changePassword,
@@ -104,6 +104,32 @@ function bottomNav(role, active) {
         <button class="bottom-nav__item ${active === slug ? 'bottom-nav__item--active' : ''}" data-link="#/${slug}">
           ${icon}<span>${label}</span>
         </button>`).join('')}
+    </nav>`;
+}
+
+/* Sidebar admin (utilisée sur desktop pour les rôles admin/mod/recru/fondateur).
+   Sur mobile, l'admin-header__nav (scrollable horizontalement) fait le job. */
+function adminSidebar(active, user) {
+  const items = [
+    ['admin',                  'Tableau',     ICONS.home,        canAccessAdmin(user)],
+    ['admin/utilisateurs',     'Utilisateurs',ICONS.users,       canAccessAdmin(user)],
+    ['admin/candidatures',     'Candidatures',ICONS.send,        canAccessAdmin(user) || canAccessRecrutement(user)],
+    ['admin/sections',         'Sections',    ICONS.shieldFull,  canAccessAdmin(user)],
+    ['admin/familles',         'Familles',    ICONS.users,       canAccessAdmin(user)],
+    ['recrutement',            'Recrutement', ICONS.graduation,  canAccessRecrutement(user)],
+    ['admin/parametres',       'Paramètres',  ICONS.cog,         canAccessAdmin(user)],
+    ['admin/audit',            'Audit',       ICONS.history,     canAccessAdmin(user)],
+    ['fondateur/sauvegardes',  'Sauvegardes', ICONS.database,    canAccessBackups(user)],
+  ].filter((x) => x[3]);
+  return `
+    <nav class="bottom-nav">
+      ${items.map(([slug, label, icon]) => `
+        <button class="bottom-nav__item ${active === slug ? 'bottom-nav__item--active' : ''}" data-link="#/${slug}">
+          ${icon}<span>${label}</span>
+        </button>`).join('')}
+      <button class="bottom-nav__item" data-action="logout" style="margin-top: auto; color: var(--red)">
+        ${ICONS.logout}<span>Déconnexion</span>
+      </button>
     </nav>`;
 }
 
@@ -294,8 +320,8 @@ function screenConnexion() {
       ${topbar({ back: true })}
       <div class="auth-wrap">
         <div class="auth-wrap__brand">
-          <img src="./assets/img/logo.svg" alt="" />
-          <div><small>3ᵉ RSMV · La Rochelle</small><strong>Mon SMV</strong></div>
+          <img src="${getLogoUrl()}" alt="" />
+          <div><small>3ᵉ RSMV · La Rochelle</small><strong>${escapeHtml(db.getSettings().applicationName || 'Mon SMV')}</strong></div>
         </div>
         <div class="eyebrow">// connexion</div>
         <h2 class="auth-wrap__title">Te voilà<br/><em>de retour.</em></h2>
@@ -1084,9 +1110,10 @@ function resolve() {
     if (route === 'admin/utilisateurs/nouveau' && canAccessAdmin(user)) return Admin.adminUserForm(user, 'nouveau');
     if (route.startsWith('admin/utilisateurs/') && canAccessAdmin(user)) return Admin.adminUserForm(user, route.split('/')[2]);
     if (route === 'admin/candidatures' && (canAccessAdmin(user) || canAccessRecrutement(user))) return Admin.adminCandidatures(user);
+    if (route === 'admin/sections' && canAccessAdmin(user)) return Admin.adminSections(user);
     if (route === 'admin/familles' && canAccessAdmin(user)) return Admin.adminFamilles(user);
     if (route === 'admin/parametres' && canAccessAdmin(user)) return Admin.adminSettings(user);
-    if (route === 'admin/audit' && canAccessAdmin(user)) return Admin.adminAudit(user);
+    if (route === 'admin/audit' && canAccessAdmin(user)) return Admin.adminAudit(user, ui.auditFilters || {});
     if (route === 'recrutement' && canAccessRecrutement(user)) return Admin.recrutementDashboard(user);
     if (route.startsWith('recrutement/incorporations/') && canAccessRecrutement(user)) return Admin.recrutementInco(user, route.split('/')[2]);
     if (route === 'fondateur/sauvegardes' && canAccessBackups(user)) return Admin.fondateurBackups(user);
@@ -1124,9 +1151,42 @@ function resolve() {
    RENDER
    ============================================================ */
 function render() {
-  $app.innerHTML = resolve();
+  const route = getRoute();
+  const user = currentUser();
+  const isAdmin = isAdminPath(route);
+  let html = resolve();
+
+  // Sur les routes admin, prépend la sidebar admin (pour layout desktop)
+  if (isAdmin && user) {
+    const active = computeAdminActive(route);
+    html = adminSidebar(active, user) + html;
+  }
+  $app.innerHTML = html;
+
+  // Promouvoir la bottom-nav éventuellement imbriquée dans .screen
+  // pour qu'elle soit un enfant direct de .app (nécessaire au layout
+  // desktop en grid : grid-area: nav).
+  const nestedNav = $app.querySelector('.screen .bottom-nav');
+  if (nestedNav) {
+    $app.insertBefore(nestedNav, $app.firstChild);
+  }
+
   document.body.scrollTop = 0;
   $app.scrollTop = 0;
+}
+
+function computeAdminActive(route) {
+  // Mappe une route admin/recru/fondateur à l'item de sidebar correspondant.
+  if (route === 'admin' || route === '') return 'admin';
+  if (route.startsWith('admin/utilisateurs')) return 'admin/utilisateurs';
+  if (route.startsWith('admin/candidatures')) return 'admin/candidatures';
+  if (route.startsWith('admin/sections')) return 'admin/sections';
+  if (route.startsWith('admin/familles')) return 'admin/familles';
+  if (route.startsWith('admin/parametres')) return 'admin/parametres';
+  if (route.startsWith('admin/audit')) return 'admin/audit';
+  if (route.startsWith('recrutement')) return 'recrutement';
+  if (route.startsWith('fondateur/sauvegardes')) return 'fondateur/sauvegardes';
+  return route;
 }
 
 window.addEventListener('hashchange', render);
@@ -1142,7 +1202,11 @@ document.addEventListener('click', async (e) => {
   if (link) { e.preventDefault(); location.hash = link.getAttribute('data-link'); return; }
 
   if (e.target.closest('[data-action="back"]')) { history.length > 1 ? history.back() : (location.hash = '#/'); return; }
-  if (e.target.closest('[data-action="logout"]')) { authLogout(); location.hash = '#/connexion'; render(); return; }
+  if (e.target.closest('[data-action="logout"]')) {
+    const u = currentUser();
+    if (u) logAction(`Déconnexion de ${u.firstName} ${u.lastName}`, 'session', u.id);
+    authLogout(); location.hash = '#/connexion'; render(); return;
+  }
   if (e.target.closest('[data-toast]')) { toast(e.target.closest('[data-toast]').getAttribute('data-toast')); return; }
 
   // Galerie filter
@@ -1188,6 +1252,7 @@ document.addEventListener('click', async (e) => {
     if (!confirm('Réinitialiser le mot de passe et forcer un changement au prochain login ?')) return;
     const newPwd = await resetPasswordByAdmin(id);
     const u = db.byId('users', id);
+    logAction(`Mot de passe réinitialisé pour ${u.firstName} ${u.lastName} (@${u.username})`, 'users', u.id);
     showResetPasswordModal(u, newPwd);
     return;
   }
@@ -1312,11 +1377,121 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  // Reset logo (admin settings)
+  if (e.target.closest('[data-action="logo-reset"]')) {
+    if (!confirm('Réinitialiser le logo par défaut ?')) return;
+    db.setSettings({ logoUrl: '' });
+    updateFavicon();
+    toast('Logo réinitialisé');
+    return;
+  }
+
+  /* ------- SECTIONS (admin) ------- */
+  if (e.target.closest('[data-action="section-add"]')) {
+    const code = prompt('Code de la section (ex: S31, S33)?');
+    if (!code) return;
+    const name = prompt('Nom complet (ex: Section S31)?', 'Section ' + code.toUpperCase());
+    if (!name) return;
+    const compagnie = parseInt(prompt("Numéro de compagnie (1, 2, 3...) ?", '1'), 10);
+    if (!compagnie || isNaN(compagnie)) return;
+    // Vérifier doublon de code
+    if (db.find('sections', (s) => s.code === code.toUpperCase())) {
+      alert('Une section avec ce code existe déjà.');
+      return;
+    }
+    db.insert('sections', { code: code.toUpperCase(), name, compagnie, description: compagnie + 'ᵉ compagnie' });
+    toast('Section créée');
+    return;
+  }
+  if (e.target.closest('[data-action="section-edit"]')) {
+    const id = e.target.closest('[data-action="section-edit"]').getAttribute('data-id');
+    const s = db.byId('sections', id);
+    if (!s) return;
+    const name = prompt('Nouveau nom ?', s.name);
+    if (name == null) return;
+    const compagnie = parseInt(prompt('Compagnie ?', s.compagnie), 10);
+    if (!compagnie || isNaN(compagnie)) return;
+    db.update('sections', id, { name, compagnie, description: compagnie + 'ᵉ compagnie' });
+    toast('Section mise à jour');
+    return;
+  }
+  if (e.target.closest('[data-action="section-delete"]')) {
+    const id = e.target.closest('[data-action="section-delete"]').getAttribute('data-id');
+    const s = db.byId('sections', id);
+    if (!s) return;
+    const members = db.filter('users', (u) => u.section === s.code);
+    if (members.length > 0) {
+      if (!confirm(`Cette section a ${members.length} membre(s). En la supprimant, ils seront désaffectés. Continuer ?`)) return;
+      members.forEach((m) => db.update('users', m.id, { section: null }));
+    } else if (!confirm(`Supprimer la section ${s.code} ?`)) return;
+    db.remove('sections', id);
+    toast('Section supprimée');
+    return;
+  }
+
+  /* ------- AUDIT export ------- */
+  if (e.target.closest('[data-action="audit-export"]')) {
+    const json = JSON.stringify(db.all('auditLog'), null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `audit-mon-smv-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Export téléchargé');
+    return;
+  }
+
   // Publish event
   if (e.target.closest('[data-action="publish-event"]')) {
     document.querySelector('[data-form="event-new"]')?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
     return;
   }
+});
+
+// Upload de logo : lecture en data-URL
+document.addEventListener('change', (e) => {
+  const upl = e.target.closest('[data-logo-upload]');
+  if (!upl) return;
+  const file = upl.files && upl.files[0];
+  if (!file) return;
+  const MAX = 500 * 1024; // 500 Ko
+  if (file.size > MAX) {
+    toast('Image trop grande (max 500 Ko)');
+    upl.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    db.setSettings({ logoUrl: reader.result });
+    updateFavicon();
+    toast('Logo mis à jour');
+    // refresh preview without full re-render
+    const prev = document.getElementById('logo-preview');
+    if (prev) prev.src = reader.result;
+    render();
+  };
+  reader.onerror = () => toast('Lecture du fichier impossible');
+  reader.readAsDataURL(file);
+});
+
+// Filtres audit log
+document.addEventListener('input', (e) => {
+  const a = e.target.closest('[data-audit-search]');
+  if (a) {
+    ui.auditFilters = { ...(ui.auditFilters || {}), q: a.value };
+    render();
+    // Replace focus on the search field
+    const newInput = document.querySelector('[data-audit-search]');
+    if (newInput) { newInput.focus(); newInput.setSelectionRange(a.value.length, a.value.length); }
+  }
+});
+document.addEventListener('change', (e) => {
+  const cl = e.target.closest('[data-audit-coll]');
+  if (cl) { ui.auditFilters = { ...(ui.auditFilters || {}), coll: cl.value }; render(); return; }
+  const us = e.target.closest('[data-audit-user]');
+  if (us) { ui.auditFilters = { ...(ui.auditFilters || {}), user: us.value }; render(); return; }
 });
 
 // Live binding pour la recherche utilisateurs
@@ -1364,9 +1539,14 @@ document.addEventListener('submit', async (e) => {
 
     case 'login': {
       const r = await authLogin(data.username, data.password);
-      if (!r.ok) { ui.loginError = r.error; render(); return; }
+      if (!r.ok) {
+        ui.loginError = r.error;
+        logAction(`Tentative de connexion échouée pour "${data.username}"`, 'session');
+        render(); return;
+      }
       ui.loginError = null;
       const u = r.user;
+      logAction(`Connexion de ${u.firstName} ${u.lastName} (${ROLES_LABELS[u.role]})`, 'session', u.id);
       let to;
       if (r.mustChangePassword) to = '#/auth/changer-mdp';
       else if (canAccessAdmin(u))            to = '#/admin';
@@ -1471,6 +1651,7 @@ document.addEventListener('submit', async (e) => {
 
     case 'admin-settings': {
       const patch = {
+        applicationName: data.applicationName,
         candidatureEmail: data.candidatureEmail,
         candidaturePhone: data.candidaturePhone,
         signalementEmail: data.signalementEmail,
@@ -1567,10 +1748,31 @@ function showResetPasswordModal(user, password) {
 }
 
 /* ============================================================
+   Favicon dynamique (suit settings.logoUrl)
+   ============================================================ */
+function updateFavicon() {
+  const url = getLogoUrl();
+  // Remplacer/insérer <link rel="icon">
+  let link = document.querySelector('link[rel="icon"]');
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'icon';
+    document.head.appendChild(link);
+  }
+  link.href = url;
+  // Type adapté
+  if (url.startsWith('data:image/svg')) link.type = 'image/svg+xml';
+  else if (url.startsWith('data:image/png')) link.type = 'image/png';
+  else if (url.startsWith('data:image/jpeg')) link.type = 'image/jpeg';
+  else link.removeAttribute('type');
+}
+
+/* ============================================================
    BOOT
    ============================================================ */
 async function boot() {
   await seedIfEmpty();
+  updateFavicon();
   // backup au démarrage si plus d'1h
   tickAutoBackup();
   setInterval(tickAutoBackup, 60 * 1000);
