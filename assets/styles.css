@@ -74,57 +74,168 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 a { color: inherit; text-decoration: none; }
 
 /* ============================================================
-   App shell · 100% mobile (même sur ordi : cadre téléphone centré)
+   App shell · 100% responsive (mobile-first)
+   - <  768px : bottom-nav, layout vertical, paddings 16px
+   - >= 768px : tablet, paddings 24px, contenu confortable
+   - >= 1024px : desktop, sidebar 280px + contenu large
    ============================================================ */
 .app {
   position: relative;
   width: 100%;
-  max-width: 440px;
   min-height: 100dvh;
   margin: 0 auto;
   background: var(--white);
   isolation: isolate;
-  overflow-x: hidden;
 }
-
 #desktop-chrome { display: none; }
 
-/* Sur grand écran : on centre le cadre mobile, fond foncé autour */
-@media (min-width: 880px) {
+/* === MOBILE (< 768px) : layout actuel === */
+
+/* === TABLET (>= 768px) : paddings plus généreux === */
+@media (min-width: 768px) {
+  body { background: var(--bg-soft); }
+  .app {
+    max-width: 720px;
+    box-shadow: 0 8px 32px rgba(11,22,56,.08);
+    border-radius: 24px;
+    margin: 24px auto;
+    min-height: calc(100dvh - 48px);
+  }
+  /* Bottom nav reste fixe mais centrée sur la largeur du cadre */
+  .bottom-nav {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: calc(100% - 0px);
+    max-width: 720px;
+    border-radius: 0 0 24px 24px;
+  }
+  .topbar { padding: 14px 24px 16px; }
+  .px-4 { padding-left: 24px; padding-right: 24px; }
+  .section-title { padding: 20px 24px 8px; }
+  .today, .tiles, .gallery, .portfolio, .res-list, .notes,
+  .chat, .schedule, .parcours, .code-q, .form, .greeting,
+  .recruit-head { padding-left: 24px; padding-right: 24px; }
+}
+
+/* === DESKTOP (>= 1024px) : sidebar + contenu pleine page === */
+@media (min-width: 1024px) {
   body {
-    background:
-      radial-gradient(900px 700px at 15% 10%, rgba(111,255,83,.12), transparent 60%),
-      radial-gradient(800px 600px at 90% 80%, rgba(45,62,115,.5), transparent 60%),
-      var(--navy-900);
-    min-height: 100dvh;
-    display: grid;
-    place-items: center;
-    padding: 24px;
+    background: var(--bg-soft);
+    margin: 0;
   }
   .app {
-    max-width: 440px;
+    max-width: 100%;
     width: 100%;
-    height: min(960px, calc(100dvh - 48px));
-    min-height: auto;
-    border-radius: 36px;
-    overflow: hidden;
-    box-shadow:
-      0 30px 80px rgba(0,0,0,.5),
-      0 0 0 8px #1a1a1a,
-      0 0 0 9px rgba(255,255,255,.08);
-    position: relative;
+    margin: 0;
+    border-radius: 0;
+    box-shadow: none;
+    min-height: 100dvh;
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    grid-template-areas: "nav content";
   }
-  /* La bottom-nav suit le cadre (positionnée par rapport à .app et non au viewport) */
-  .bottom-nav { position: absolute !important; }
-  /* Le contenu défile DANS le cadre, pas dans la page */
-  .screen {
-    height: 100%;
-    min-height: 0;
+
+  /* Sidebar : bottom-nav transformée en navigation latérale */
+  .bottom-nav {
+    grid-area: nav;
+    position: sticky !important;
+    top: 0; bottom: auto; left: auto; right: auto;
+    transform: none;
+    height: 100dvh;
+    width: 100%;
+    max-width: none;
+    display: flex !important;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 24px 16px;
+    gap: 4px;
+    background: var(--white);
+    border-right: 1px solid var(--bg-stroke);
+    border-top: 0;
+    border-radius: 0;
+    box-shadow: none;
     overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+    grid-auto-flow: row !important;
+    grid-auto-columns: 100% !important;
+    z-index: 20;
+    animation: none;
   }
-  .screen::-webkit-scrollbar { width: 4px; }
-  .screen::-webkit-scrollbar-thumb { background: rgba(11,22,56,.18); border-radius: 4px; }
+  .bottom-nav::before {
+    content: 'Mon SMV';
+    display: block;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 16px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    padding: 4px 12px 18px;
+    color: var(--navy-900);
+    border-bottom: 1px solid var(--bg-stroke);
+    margin-bottom: 14px;
+  }
+  .bottom-nav__item {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    width: 100%;
+    text-align: left;
+    font-size: 13px;
+  }
+  .bottom-nav__item svg { width: 20px; height: 20px; }
+  .bottom-nav__item--active {
+    background: var(--navy-900);
+    color: var(--white) !important;
+  }
+  .bottom-nav__item--active::before { display: none; }
+  .bottom-nav__item:hover:not(.bottom-nav__item--active) {
+    background: var(--bg-cream);
+    color: var(--ink-900);
+  }
+
+  /* Si pas de bottom-nav (admin sans sidebar), la grid ne fait qu'une colonne */
+  .app:not(:has(.bottom-nav)) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "content";
+  }
+
+  .screen {
+    grid-area: content;
+    min-height: 100dvh;
+    padding-bottom: 0;
+    background: var(--white);
+  }
+  .screen--cream { background: var(--bg-cream); }
+  .screen--dark { background: var(--navy-900); }
+
+  /* Topbar plus confortable, contenu centré dans une colonne */
+  .topbar { padding: 16px 32px 18px; max-width: 1200px; margin: 0 auto; width: 100%; }
+  .screen__scroll, .today, .tiles, .gallery, .portfolio,
+  .res-list, .notes, .chat, .schedule, .parcours, .code-q,
+  .form, .greeting, .recruit-head, .px-4 {
+    max-width: 1100px;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+  .section-title { max-width: 1100px; margin: 0 auto; padding: 28px 32px 10px; }
+
+  /* Grilles plus généreuses sur desktop */
+  .grid-2 { grid-template-columns: repeat(4, 1fr); padding-left: 32px; padding-right: 32px; max-width: 1100px; margin: 0 auto; }
+  .gallery, .portfolio { grid-template-columns: repeat(4, 1fr); }
+  .tiles { grid-template-columns: repeat(4, 1fr); }
+
+  /* Greeting / hero plus larges */
+  .greeting { border-radius: 0 0 32px 32px; padding: 32px 32px 40px; }
+  .hero { margin: 16px auto 24px; max-width: 1100px; padding: 28px; }
+}
+
+/* === Très grand écran (>= 1440px) : on borne le contenu === */
+@media (min-width: 1440px) {
+  .app { max-width: 1600px; margin: 0 auto; }
 }
 
 /* ============================================================
@@ -1241,6 +1352,57 @@ a { color: inherit; text-decoration: none; }
 .admin-body {
   padding: 18px 14px 60px;
   width: 100%;
+}
+
+/* === ADMIN RESPONSIVE === */
+@media (min-width: 768px) {
+  .admin-header {
+    padding: 14px 24px;
+    grid-template-columns: 40px 1fr auto;
+  }
+  .admin-header__logo { width: 40px; }
+  .admin-header__brand { font-size: 16px; }
+  .admin-header__brand small { font-size: 10px; }
+  .admin-header__user span:not(.admin-header__avatar) { display: inline; }
+  .admin-header__user { padding: 6px 14px 6px 6px; gap: 10px; font-size: 12px; }
+  .admin-body { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  .admin-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+  }
+}
+
+@media (min-width: 1024px) {
+  /* Admin sur desktop : sidebar à gauche, header simplifié au-dessus */
+  body[data-mode="admin"] .app {
+    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-areas: "nav content";
+    background: var(--bg-cream);
+  }
+  body[data-mode="admin"] .admin-shell {
+    grid-area: content;
+    background: var(--bg-cream);
+    min-height: 100dvh;
+  }
+  body[data-mode="admin"] .admin-header {
+    grid-template-columns: 1fr auto;
+    padding: 16px 32px;
+  }
+  body[data-mode="admin"] .admin-header__logo,
+  body[data-mode="admin"] .admin-header__brand { display: none; }
+  body[data-mode="admin"] .admin-header__nav { display: none; }
+  body[data-mode="admin"] .admin-body {
+    padding: 24px 32px 60px;
+    max-width: 1280px;
+  }
+  body[data-mode="admin"] .admin-h1 { font-size: 32px; }
+  body[data-mode="admin"] .admin-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  body[data-mode="admin"] .admin-kpi__num { font-size: 36px !important; }
+
+  /* Sidebar admin = bottom-nav-admin (qu'on ajoute via JS) */
+  body[data-mode="admin"] .bottom-nav { display: flex !important; }
 }
 .admin-h1 {
   font-family: var(--font-display);

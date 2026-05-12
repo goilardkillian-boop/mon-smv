@@ -125,15 +125,49 @@ function getSessionUserId() {
   } catch { return null; }
 }
 
-function logAudit(coll, action, entityId) {
+function logAudit(coll, action, entityId, description = null) {
   _db.auditLog = _db.auditLog || [];
   _db.auditLog.unshift({
     id: uid('log'),
     at: new Date().toISOString(),
     coll, action, entityId,
+    description: description || autoDescription(coll, action, entityId),
     by: getSessionUserId(),
   });
   if (_db.auditLog.length > 500) _db.auditLog.length = 500;
+}
+
+function autoDescription(coll, action, entityId) {
+  const verb = { insert: 'a créé', update: 'a modifié', remove: 'a supprimé', set: 'a configuré' }[action] || action;
+  const labels = {
+    users: 'un utilisateur',
+    sections: 'une section',
+    incorporations: 'une incorporation',
+    formations: 'une formation',
+    candidatures: 'une candidature',
+    invitations: 'une invitation famille',
+    events: 'un événement',
+    news: 'une actualité',
+    jobs: "une offre d'emploi",
+    notes: 'une note',
+    messages: 'un message',
+    settings: 'les paramètres',
+  };
+  return `${verb} ${labels[coll] || coll}`;
+}
+
+// API publique pour logger une action métier (login, reset password...)
+export function logAction(description, coll = 'system', entityId = null) {
+  _db.auditLog = _db.auditLog || [];
+  _db.auditLog.unshift({
+    id: uid('log'),
+    at: new Date().toISOString(),
+    coll, action: 'event', entityId, description,
+    by: getSessionUserId(),
+  });
+  if (_db.auditLog.length > 500) _db.auditLog.length = 500;
+  write(_db);
+  notify();
 }
 
 /* -------------------- Backups (12 slots) -------------------- */

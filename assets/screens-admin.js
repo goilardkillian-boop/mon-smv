@@ -27,6 +27,7 @@ function adminHeader(active, user) {
     ['admin',                'Tableau de bord', canAccessAdmin(user)],
     ['admin/utilisateurs',   'Utilisateurs',    canAccessAdmin(user)],
     ['admin/candidatures',   'Candidatures',    canAccessAdmin(user) || canAccessRecrutement(user)],
+    ['admin/sections',       'Sections',        canAccessAdmin(user)],
     ['admin/familles',       'Familles',        canAccessAdmin(user)],
     ['recrutement',          'Recrutement',     canAccessRecrutement(user)],
     ['admin/parametres',     'Paramètres',      canAccessAdmin(user)],
@@ -477,26 +478,59 @@ export function adminSettings(user) {
 }
 
 /* ============================================================
-   ADMIN · Audit log
+   ADMIN · Audit log (qui a fait quoi à quel moment)
    ============================================================ */
-export function adminAudit(user) {
-  const logs = db.all('auditLog').slice(0, 200);
+export function adminAudit(user, filters = {}) {
+  let logs = db.all('auditLog');
+  if (filters.coll && filters.coll !== 'tout') logs = logs.filter((l) => l.coll === filters.coll);
+  if (filters.user) logs = logs.filter((l) => l.by === filters.user);
+  if (filters.q) {
+    const q = filters.q.toLowerCase();
+    logs = logs.filter((l) => (l.description || '').toLowerCase().includes(q) || (l.entityId || '').toLowerCase().includes(q));
+  }
+  logs = logs.slice(0, 300);
+
+  const collOptions = [...new Set(db.all('auditLog').map((l) => l.coll))];
+  const userOptions = [...new Set(db.all('auditLog').map((l) => l.by).filter(Boolean))];
+
   return shell('admin/audit', user, `
-    <h1 class="admin-h1">Journal d'<em>audit</em></h1>
-    <p class="admin-sub">200 dernières écritures · permet de retracer toute modification.</p>
+    <div class="row-between mb-4">
+      <h1 class="admin-h1">Journal d'<em>activité</em></h1>
+      <button class="btn btn--ghost-ink btn--sm" data-action="audit-export">${ICONS.download}<span>Export JSON</span></button>
+    </div>
+    <p class="admin-sub">Qui a fait quoi, à quel moment. 500 dernières écritures conservées.</p>
+
+    <div class="admin-toolbar">
+      <input class="admin-toolbar__search" placeholder="Rechercher dans la description ou l'ID…" data-audit-search value="${escapeAttr(filters.q || '')}" />
+      <select class="admin-field__select" data-audit-coll style="max-width: 180px">
+        <option value="tout">Toutes les collections</option>
+        ${collOptions.map((c) => `<option value="${c}" ${filters.coll === c ? 'selected' : ''}>${c}</option>`).join('')}
+      </select>
+      <select class="admin-field__select" data-audit-user style="max-width: 180px">
+        <option value="">Tous les utilisateurs</option>
+        ${userOptions.map((id) => {
+          const u = db.byId('users', id);
+          return u ? `<option value="${id}" ${filters.user === id ? 'selected' : ''}>${u.firstName} ${u.lastName}</option>` : '';
+        }).join('')}
+      </select>
+      <span class="muted" style="font-size: 12px">${logs.length} résultat${logs.length > 1 ? 's' : ''}</span>
+    </div>
+
     <div class="admin-table-wrap">
       <table class="admin-table">
-        <thead><tr><th>Quand</th><th>Par</th><th>Collection</th><th>Action</th><th>Entité</th></tr></thead>
+        <thead><tr><th>Quand</th><th>Par</th><th>Description</th><th>Type</th><th>ID</th></tr></thead>
         <tbody>
-          ${logs.length === 0 ? `<tr><td colspan="5" style="text-align:center; padding: 32px; color: var(--ink-500);">Journal vide.</td></tr>` : ''}
+          ${logs.length === 0 ? `<tr><td colspan="5" style="text-align:center; padding: 32px; color: var(--ink-500);">Aucune entrée.</td></tr>` : ''}
           ${logs.map((l) => {
             const by = l.by ? db.byId('users', l.by) : null;
             return `<tr>
-              <td style="font-family: var(--font-mono); font-size: 11px">${fmtDateTime(l.at)}</td>
-              <td>${by ? by.firstName + ' ' + by.lastName : '<span class="muted">système</span>'}</td>
-              <td>${tag(l.coll, 'navy')}</td>
-              <td>${tag(l.action, l.action === 'remove' ? 'red' : l.action === 'insert' ? 'green' : 'orange')}</td>
-              <td><code style="font-family: var(--font-mono); font-size: 11px">${l.entityId || '—'}</code></td>
+              <td style="font-family: var(--font-mono); font-size: 11px; white-space: nowrap">${fmtDateTime(l.at)}</td>
+              <td>
+                ${by ? `<span style="display: inline-flex; align-items: center; gap: 6px"><span class="msg__avatar" style="width: 22px; height: 22px; font-size: 9px">${initials(by.firstName, by.lastName)}</span>${by.firstName} ${by.lastName} <span class="muted" style="font-size: 11px">· ${ROLES_LABELS[by.role] || by.role}</span></span>` : '<span class="muted">système</span>'}
+              </td>
+              <td>${escapeAttr(l.description || `${l.action} ${l.coll}`)}</td>
+              <td>${tag(l.coll, 'navy')} ${tag(l.action, l.action === 'remove' ? 'red' : l.action === 'insert' ? 'green' : l.action === 'event' ? 'fluo' : 'orange')}</td>
+              <td><code style="font-family: var(--font-mono); font-size: 10px; color: var(--ink-500)">${l.entityId || '—'}</code></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -512,15 +546,53 @@ export function recrutementDashboard(user) {
   const incos = db.all('incorporations');
   const formations = db.all('formations');
   const cands = db.all('candidatures');
+  const newCands = cands.filter((c) => c.status === 'nouveau' || !c.status);
   return shell('recrutement', user, `
     <h1 class="admin-h1">Cellule <em>recrutement</em></h1>
     <p class="admin-sub">Gestion des incorporations (tous les 2 mois) et des formations proposées.</p>
 
     <div class="admin-grid">
-      <div class="admin-kpi"><div class="admin-kpi__lbl">Incorporations planifiées</div><div class="admin-kpi__num admin-kpi__num--fluo">${incos.length}</div><div class="admin-kpi__hint">${incos.filter((i) => i.open).length} ouvertes</div></div>
-      <div class="admin-kpi"><div class="admin-kpi__lbl">Formations proposées</div><div class="admin-kpi__num">${formations.length}</div><div class="admin-kpi__hint">toutes incorporations confondues</div></div>
-      <div class="admin-kpi"><div class="admin-kpi__lbl">Candidatures à traiter</div><div class="admin-kpi__num admin-kpi__num--red">${cands.filter((c) => c.status === 'nouveau' || !c.status).length}</div><div class="admin-kpi__hint">${cands.length} au total</div></div>
+      <a class="admin-kpi" href="#/recrutement" style="text-decoration:none; color:inherit">
+        <div class="admin-kpi__lbl">Incorporations planifiées</div>
+        <div class="admin-kpi__num admin-kpi__num--fluo">${incos.length}</div>
+        <div class="admin-kpi__hint">${incos.filter((i) => i.open).length} ouvertes</div>
+      </a>
+      <a class="admin-kpi" href="#/recrutement" style="text-decoration:none; color:inherit">
+        <div class="admin-kpi__lbl">Formations proposées</div>
+        <div class="admin-kpi__num">${formations.length}</div>
+        <div class="admin-kpi__hint">toutes incorporations confondues</div>
+      </a>
+      <a class="admin-kpi" href="#/admin/candidatures" style="text-decoration:none; color:inherit; ${newCands.length > 0 ? 'border-color: var(--red);' : ''}">
+        <div class="admin-kpi__lbl">Candidatures à traiter</div>
+        <div class="admin-kpi__num ${newCands.length > 0 ? 'admin-kpi__num--red' : ''}">${newCands.length}</div>
+        <div class="admin-kpi__hint">${cands.length} au total · cliquer pour voir</div>
+      </a>
     </div>
+
+    ${newCands.length > 0 ? `
+      <div class="admin-card">
+        <div class="admin-card__head">
+          <h2 class="admin-card__title">Dernières candidatures · à traiter</h2>
+          <a href="#/admin/candidatures" class="btn btn--ghost-ink btn--sm">Voir toutes</a>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Reçue</th><th>Nom</th><th>Âge</th><th>Recherche</th><th></th></tr></thead>
+            <tbody>
+              ${newCands.slice(0, 5).map((c) => `
+                <tr>
+                  <td style="font-family: var(--font-mono); font-size: 11px">${fmtDateTime(c.createdAt)}</td>
+                  <td>${escapeAttr(c.firstName)} ${escapeAttr(c.lastName)}</td>
+                  <td>${c.age}</td>
+                  <td>${escapeAttr(c.goal)}</td>
+                  <td><div class="admin-table__actions">
+                    <button data-action="cand-promote" data-id="${c.id}" title="Pré-inscrire">${ICONS.plus}</button>
+                  </div></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>` : ''}
 
     <div class="admin-card">
       <div class="admin-card__head">
@@ -640,5 +712,75 @@ export function fondateurBackups(user) {
         <button class="backup-row__btn backup-row__btn--restore" data-action="backup-restore" data-id="${b.id}">${ICONS.refresh}<span> Restaurer</span></button>
         <button class="backup-row__btn backup-row__btn--delete" data-action="backup-delete" data-id="${b.id}" title="Supprimer">${ICONS.trash}</button>
       </div>`).join('')}
+  `);
+}
+
+/* ============================================================
+   ADMIN · Sections & compagnies
+   ============================================================ */
+export function adminSections(user) {
+  const sections = db.all('sections').sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+  const compagnies = [...new Set(sections.map((s) => s.compagnie))].sort();
+  const members = db.all('users');
+  return shell('admin/sections', user, `
+    <div class="row-between mb-4">
+      <h1 class="admin-h1">Sections & <em>compagnies</em></h1>
+      <button class="btn btn--navy" data-action="section-add">${ICONS.plus}<span>Nouvelle section</span></button>
+    </div>
+    <p class="admin-sub">Crée, modifie et supprime les sections. Une section appartient à une compagnie (1ʳᵉ, 2ᵉ, etc.).</p>
+
+    <div class="admin-grid">
+      <div class="admin-kpi"><div class="admin-kpi__lbl">Sections</div><div class="admin-kpi__num">${sections.length}</div><div class="admin-kpi__hint">${compagnies.length} compagnie${compagnies.length > 1 ? 's' : ''}</div></div>
+      <div class="admin-kpi"><div class="admin-kpi__lbl">Volontaires affectés</div><div class="admin-kpi__num admin-kpi__num--fluo">${members.filter((u) => u.role === 'jeune' && u.section).length}</div><div class="admin-kpi__hint">sur ${members.filter((u) => u.role === 'jeune').length}</div></div>
+      <div class="admin-kpi"><div class="admin-kpi__lbl">Cadres rattachés</div><div class="admin-kpi__num">${members.filter((u) => u.role === 'cadre' && u.section).length}</div></div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card__head"><h2 class="admin-card__title">Toutes les sections</h2></div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Code</th><th>Nom</th><th>Compagnie</th><th>Cadres</th><th>Volontaires</th><th></th></tr></thead>
+          <tbody>
+            ${sections.length === 0 ? `<tr><td colspan="6" style="text-align:center; padding: 24px; color: var(--ink-500);">Aucune section. Crée-en une avec le bouton +.</td></tr>` : ''}
+            ${sections.map((s) => {
+              const cadres = members.filter((u) => u.role === 'cadre' && u.section === s.code).length;
+              const jeunes = members.filter((u) => u.role === 'jeune' && u.section === s.code).length;
+              return `<tr>
+                <td><code style="font-family: var(--font-mono); font-weight: 700">${s.code}</code></td>
+                <td>${escapeAttr(s.name || s.code)}</td>
+                <td>${tag(s.compagnie + 'ᵉ compagnie', 'navy')}</td>
+                <td>${cadres}</td>
+                <td>${jeunes}</td>
+                <td>
+                  <div class="admin-table__actions">
+                    <button data-action="section-edit" data-id="${s.id}" title="Modifier">${ICONS.edit}</button>
+                    <button data-action="section-delete" data-id="${s.id}" title="Supprimer" class="danger">${ICONS.trash}</button>
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card__head">
+        <h2 class="admin-card__title">Compagnies (${compagnies.length})</h2>
+      </div>
+      <p class="muted" style="font-size: 13px; margin-bottom: 12px">
+        Les compagnies sont déduites des sections. Pour créer une nouvelle compagnie, crée une section avec un numéro de compagnie qui n'existe pas encore.
+      </p>
+      <div class="admin-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr))">
+        ${compagnies.map((c) => {
+          const inSecs = sections.filter((s) => s.compagnie === c);
+          return `<div class="admin-kpi">
+            <div class="admin-kpi__lbl">${c}ᵉ compagnie</div>
+            <div class="admin-kpi__num">${inSecs.length}</div>
+            <div class="admin-kpi__hint">${inSecs.map((x) => x.code).join(' · ')}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
   `);
 }
