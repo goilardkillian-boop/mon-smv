@@ -9,7 +9,7 @@
 
 import { ICONS } from './icons.js';
 import {
-  db, getBackups, restoreBackup, backupNow, deleteBackup, tickAutoBackup, onChange, uid,
+  db, getBackups, restoreBackup, backupNow, deleteBackup, tickAutoBackup, onChange, uid, getLogoUrl,
 } from './db.js';
 import {
   createUser, login as authLogin, logout as authLogout, changePassword,
@@ -294,8 +294,8 @@ function screenConnexion() {
       ${topbar({ back: true })}
       <div class="auth-wrap">
         <div class="auth-wrap__brand">
-          <img src="./assets/img/logo.svg" alt="" />
-          <div><small>3ᵉ RSMV · La Rochelle</small><strong>Mon SMV</strong></div>
+          <img src="${getLogoUrl()}" alt="" />
+          <div><small>3ᵉ RSMV · La Rochelle</small><strong>${escapeHtml(db.getSettings().applicationName || 'Mon SMV')}</strong></div>
         </div>
         <div class="eyebrow">// connexion</div>
         <h2 class="auth-wrap__title">Te voilà<br/><em>de retour.</em></h2>
@@ -1312,11 +1312,46 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  // Reset logo (admin settings)
+  if (e.target.closest('[data-action="logo-reset"]')) {
+    if (!confirm('Réinitialiser le logo par défaut ?')) return;
+    db.setSettings({ logoUrl: '' });
+    updateFavicon();
+    toast('Logo réinitialisé');
+    return;
+  }
+
   // Publish event
   if (e.target.closest('[data-action="publish-event"]')) {
     document.querySelector('[data-form="event-new"]')?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
     return;
   }
+});
+
+// Upload de logo : lecture en data-URL
+document.addEventListener('change', (e) => {
+  const upl = e.target.closest('[data-logo-upload]');
+  if (!upl) return;
+  const file = upl.files && upl.files[0];
+  if (!file) return;
+  const MAX = 500 * 1024; // 500 Ko
+  if (file.size > MAX) {
+    toast('Image trop grande (max 500 Ko)');
+    upl.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    db.setSettings({ logoUrl: reader.result });
+    updateFavicon();
+    toast('Logo mis à jour');
+    // refresh preview without full re-render
+    const prev = document.getElementById('logo-preview');
+    if (prev) prev.src = reader.result;
+    render();
+  };
+  reader.onerror = () => toast('Lecture du fichier impossible');
+  reader.readAsDataURL(file);
 });
 
 // Live binding pour la recherche utilisateurs
@@ -1471,6 +1506,7 @@ document.addEventListener('submit', async (e) => {
 
     case 'admin-settings': {
       const patch = {
+        applicationName: data.applicationName,
         candidatureEmail: data.candidatureEmail,
         candidaturePhone: data.candidaturePhone,
         signalementEmail: data.signalementEmail,
@@ -1567,10 +1603,31 @@ function showResetPasswordModal(user, password) {
 }
 
 /* ============================================================
+   Favicon dynamique (suit settings.logoUrl)
+   ============================================================ */
+function updateFavicon() {
+  const url = getLogoUrl();
+  // Remplacer/insérer <link rel="icon">
+  let link = document.querySelector('link[rel="icon"]');
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'icon';
+    document.head.appendChild(link);
+  }
+  link.href = url;
+  // Type adapté
+  if (url.startsWith('data:image/svg')) link.type = 'image/svg+xml';
+  else if (url.startsWith('data:image/png')) link.type = 'image/png';
+  else if (url.startsWith('data:image/jpeg')) link.type = 'image/jpeg';
+  else link.removeAttribute('type');
+}
+
+/* ============================================================
    BOOT
    ============================================================ */
 async function boot() {
   await seedIfEmpty();
+  updateFavicon();
   // backup au démarrage si plus d'1h
   tickAutoBackup();
   setInterval(tickAutoBackup, 60 * 1000);

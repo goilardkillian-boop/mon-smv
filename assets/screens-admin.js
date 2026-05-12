@@ -8,7 +8,7 @@
    / canAccessBackups).
    ============================================================ */
 
-import { db, getBackups, restoreBackup, backupNow, deleteBackup } from './db.js';
+import { db, getBackups, restoreBackup, backupNow, deleteBackup, getLogoUrl } from './db.js';
 import {
   createUser, resetPasswordByAdmin, ROLES_LABELS, RELATIONSHIPS,
   canAccessAdmin, canAccessBackups, canAccessRecrutement, slug,
@@ -17,6 +17,7 @@ import { ICONS } from './icons.js';
 
 /* ---------- Helpers de présentation ---------- */
 function initials(f = '', l = '') { return ((f[0] || '') + (l[0] || '')).toUpperCase(); }
+function escapeAttr(s) { return (s ?? '').toString().replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
 function fmtDate(iso) { if (!iso) return '—'; const d = new Date(iso); return d.toLocaleDateString('fr-FR'); }
 function fmtDateTime(iso) { if (!iso) return '—'; const d = new Date(iso); return d.toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
 function tag(label, cls = 'grey') { return `<span class="tag tag--${cls}">${label}</span>`; }
@@ -34,8 +35,8 @@ function adminHeader(active, user) {
   ].filter(([,,ok]) => ok);
   return `
     <header class="admin-header">
-      <img class="admin-header__logo" src="./assets/img/logo.svg" alt="" />
-      <div class="admin-header__brand">Mon SMV<small>panel · 3ᵉ RSMV</small></div>
+      <img class="admin-header__logo" src="${getLogoUrl()}" alt="" />
+      <div class="admin-header__brand">${db.getSettings().applicationName || 'Mon SMV'}<small>panel · 3ᵉ RSMV</small></div>
       <nav class="admin-header__nav">
         ${nav.map(([slug, label]) => `<a href="#/${slug}" class="${active === slug ? 'is-active' : ''}">${label}</a>`).join('')}
       </nav>
@@ -369,6 +370,25 @@ export function adminSettings(user) {
     <p class="admin-sub">Destinataires des emails, contacts, URLs, textes éditoriaux. Toute modification est immédiate côté utilisateur.</p>
 
     <form data-form="admin-settings">
+      <div class="admin-card">
+        <div class="admin-card__head"><h2 class="admin-card__title">Identité visuelle</h2></div>
+        <div style="display: grid; grid-template-columns: 80px 1fr; gap: 16px; align-items: center; margin-bottom: 16px;">
+          <div style="width: 80px; height: 80px; border-radius: 16px; background: var(--bg-soft); display: grid; place-items: center; overflow: hidden; border: 1.5px solid var(--bg-stroke);">
+            <img src="${getLogoUrl()}" alt="Logo actuel" style="max-width: 100%; max-height: 100%; object-fit: contain;" id="logo-preview" />
+          </div>
+          <div>
+            <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" data-logo-upload id="logo-upload" style="display: none;" />
+            <button type="button" class="btn btn--ghost-ink btn--sm" onclick="document.getElementById('logo-upload').click()">${ICONS.upload}<span>Téléverser un logo</span></button>
+            ${s.logoUrl ? `<button type="button" class="btn btn--ghost-ink btn--sm" data-action="logo-reset" style="margin-left: 8px">${ICONS.refresh}<span>Réinitialiser</span></button>` : ''}
+            <div class="admin-field__hint" style="margin-top: 8px">PNG, JPG, SVG ou WebP. Taille max ~500 Ko. Sera utilisé partout : onboarding, header admin, favicon.</div>
+          </div>
+        </div>
+        <div class="admin-field">
+          <label class="admin-field__label">Nom de l'application</label>
+          <input class="admin-field__input" name="applicationName" value="${escapeAttr(s.applicationName || 'Mon SMV')}" />
+        </div>
+      </div>
+
       <div class="admin-card">
         <div class="admin-card__head"><h2 class="admin-card__title">Routage des contacts</h2></div>
         <div class="admin-field--row">
