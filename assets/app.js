@@ -304,8 +304,9 @@ function screenConnexion() {
 
         <form data-form="login" style="display:flex; flex-direction: column; gap: 12px;">
           <div class="field" style="margin: 0">
-            <label class="field__label" style="color: rgba(255,255,255,.7)">Identifiant ou email</label>
-            <input class="field__input" name="username" autocomplete="username" autocapitalize="off" autocorrect="off" required />
+            <label class="field__label" style="color: rgba(255,255,255,.7)">Identifiant</label>
+            <input class="field__input" name="username" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="ex. admin · l.morel · t.bertin" required />
+            <div class="field__hint" style="color: rgba(255,255,255,.5); font-size: 11px; margin-top: 4px">Identifiant simple (sans @). Tu peux aussi utiliser ton email.</div>
           </div>
           <div class="field" style="margin: 0">
             <label class="field__label" style="color: rgba(255,255,255,.7)">Mot de passe</label>
@@ -1365,8 +1366,17 @@ document.addEventListener('submit', async (e) => {
       const r = await authLogin(data.username, data.password);
       if (!r.ok) { ui.loginError = r.error; render(); return; }
       ui.loginError = null;
-      if (r.mustChangePassword) { location.hash = '#/auth/changer-mdp'; render(); }
-      else { location.hash = '#/'; render(); }
+      const u = r.user;
+      let to;
+      if (r.mustChangePassword) to = '#/auth/changer-mdp';
+      else if (canAccessAdmin(u))            to = '#/admin';
+      else if (u.role === 'recrutement')     to = '#/recrutement';
+      else if (u.role === 'cadre')           to = '#/pilote';
+      else if (u.role === 'famille')         to = '#/famille/photos';
+      else                                   to = '#/accueil';
+      location.hash = to;
+      render();
+      toast(`Bienvenue ${u.firstName}`);
       break;
     }
 
