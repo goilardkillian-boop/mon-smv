@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" fill="none">
+  <defs>
+    <pattern id="dots-light" patternUnits="userSpaceOnUse" width="10" height="10">
+      <circle cx="2" cy="2" r="1.4" fill="#3DA435"/>
+    </pattern>
+  </defs>
+  <!-- dotted blob (back) -->
+  <path d="M280 30
+           C 340 30, 380 70, 380 130
+           C 380 180, 360 200, 320 210
+           C 290 220, 290 250, 320 270
+           C 360 290, 360 340, 310 360
+           C 250 380, 200 360, 180 320
+           C 165 290, 180 270, 160 250
+           C 130 220, 130 180, 180 160
+           C 230 140, 240 120, 220 90
+           C 210 60, 230 30, 280 30 Z"
+        fill="url(#dots-light)" opacity=".85"/>
+  <!-- solid green blob (front) -->
+  <path d="M120 130
+           C 180 110, 220 140, 220 190
+           C 220 230, 200 250, 170 260
+           C 140 270, 140 290, 170 310
+           C 200 330, 200 370, 150 380
+           C 90 390, 40 370, 20 330
+           C 0 290, 30 270, 20 240
+           C 10 200, 30 170, 70 160
+           C 100 150, 100 140, 120 130 Z"
+        fill="#6FFF53"/>
+</svg>

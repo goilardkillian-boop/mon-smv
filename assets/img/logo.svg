@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 280" fill="none">
+  <!-- Sword behind shield -->
+  <g>
+    <rect x="93" y="6" width="14" height="22" fill="#FFC83D" stroke="#B58A1F" stroke-width="1.5"/>
+    <text x="100" y="22" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="14" fill="#0B1638">3</text>
+    <rect x="96" y="26" width="8" height="40" fill="#D6D6D6" stroke="#7A7A7A" stroke-width="1"/>
+    <rect x="70" y="62" width="60" height="8" rx="2" fill="#FFC83D" stroke="#B58A1F" stroke-width="1.5"/>
+    <rect x="92" y="246" width="16" height="22" fill="#D6D6D6" stroke="#7A7A7A" stroke-width="1"/>
+    <polygon points="92,268 100,278 108,268" fill="#D6D6D6" stroke="#7A7A7A" stroke-width="1"/>
+  </g>
+
+  <!-- Shield -->
+  <path d="M30 72 L170 72 L170 200 Q170 240 100 264 Q30 240 30 200 Z"
+        fill="#FFC83D" stroke="#B58A1F" stroke-width="2"/>
+  <path d="M38 80 L162 80 L162 198 Q162 232 100 254 Q38 232 38 198 Z"
+        fill="#2D3E73"/>
+
+  <!-- Red triangles -->
+  <polygon points="38,80 100,140 38,200" fill="#A72A1F"/>
+  <polygon points="162,80 100,140 162,200" fill="#A72A1F"/>
+
+  <!-- France silhouette -->
+  <path d="M80 100 Q70 105 68 118 L64 130 Q60 140 65 150 L62 168 Q66 178 75 182 L82 198 Q90 208 100 210 L114 212 Q124 210 132 200 L138 190 Q142 178 138 168 L142 156 Q140 144 132 138 L128 124 Q120 112 110 108 L96 102 Z"
+        fill="#8DA1D3" stroke="#FFFFFF" stroke-width="1.5"/>
+
+  <!-- Curve / star -->
+  <path d="M70 152 Q100 132 130 142" stroke="#FFFFFF" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M68 162 Q98 152 128 168" stroke="#A72A1F" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <circle cx="118" cy="118" r="6" fill="#0B1638"/>
+
+  <!-- SMV text -->
+  <text x="100" y="180" text-anchor="middle"
+        font-family="Oswald, Arial Black, sans-serif"
+        font-weight="800" font-size="28" fill="#2D3E73"
+        letter-spacing="2">SMV</text>
+
+  <!-- Banner with text -->
+  <path d="M30 80 Q100 60 170 80" stroke="#FFC83D" fill="none" stroke-width="0"/>
+  <text font-family="Arial, sans-serif" font-weight="700" font-size="9" fill="#0B1638" letter-spacing=".5">
+    <textPath href="#banner" startOffset="50%" text-anchor="middle">Régiment du Service Militaire Volontaire</textPath>
+  </text>
+  <defs>
+    <path id="banner" d="M30 80 Q100 60 170 80"/>
+  </defs>
+
+  <!-- Small chevron / device at bottom -->
+  <g transform="translate(85 222)">
+    <rect width="30" height="22" rx="2" fill="#FFFFFF" stroke="#0B1638" stroke-width="1"/>
+    <path d="M0 0 L15 11 L30 0" stroke="#0B1638" stroke-width="1" fill="none"/>
+    <path d="M3 6 Q8 4 13 6" stroke="#3E80C8" stroke-width="1.2" fill="none"/>
+    <path d="M3 12 Q8 10 13 12" stroke="#3E80C8" stroke-width="1.2" fill="none"/>
+    <path d="M18 4 Q24 8 24 14 Q22 18 18 16 Z" fill="#A72A1F"/>
+  </g>
+</svg>
