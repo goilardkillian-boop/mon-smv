@@ -3,10 +3,10 @@
 > Une application qui réunit jeunes, cadres et familles autour du
 > **Service Militaire Volontaire** — caserne Beauregard, La Rochelle.
 
-Maquette haute-fidélité interactive de l'application **Mon SMV**, conçue à partir
-du brief créatif du 3ᵉ RSMV (mai 2026). PWA installable, mobile-first, 100%
-responsive web — pensée pour être ensuite emballée vers l'App Store et le Play
-Store via Capacitor.
+**Version 0.2 · beta fonctionnelle** : authentification réelle (PBKDF2),
+pré-inscription par admin/modérateur, panel d'administration complet, gestion des
+incorporations bimestrielles, invitations famille avec lien de parenté,
+sauvegardes en anneau pour le fondateur.
 
 ---
 
@@ -18,180 +18,208 @@ Store via Capacitor.
 
 1. Clique sur le badge ↑ (ou **Code › Codespaces › Create codespace on main**).
 2. Attends ~30 s que le devcontainer démarre.
-3. Le serveur HTTP démarre tout seul sur le port `8080`. Un onglet "Simple Browser"
-   s'ouvre automatiquement avec l'app.
-4. Pour la voir au format mobile : clique sur l'icône **« Open in Browser »**
-   en haut à droite de l'onglet Ports, puis dans Chrome ouvre les DevTools
-   (`F12`) et active le **mode responsive** (`Ctrl+Shift+M` / `Cmd+Shift+M`).
-
-> Toute modification de fichier est instantanée — recharge l'onglet pour la voir.
+3. Le serveur HTTP démarre tout seul sur le port `8080` ; un Simple Browser
+   s'ouvre.
+4. Ouvre l'URL forwardée dans Chrome (icône 🌐 dans l'onglet Ports), puis
+   active le mode mobile (`Ctrl+Shift+M`).
 
 ### Option B · En local
 
-Aucune build, aucune dépendance.
-
 ```bash
-# n'importe quel serveur statique
-python3 -m http.server 8080
+npm start                 # python3 -m http.server 8080
 # ou
 npx serve .
 ```
 
-Puis ouvre **http://localhost:8080** (utilise le DevTools mobile pour la meilleure
-expérience).
+### Option C · Tests
 
-> Le service-worker se charge automatiquement au 2ᵉ chargement → l'app est
-> installable comme PWA depuis Chrome / Safari iOS / Edge.
+```bash
+npm run smoke             # 28 tests sur DB / auth / admin (Node JSDOM-less)
+```
 
 ---
 
-## 🗺 Architecture
+## 🔐 Comptes de démonstration
+
+| Identifiant      | Mot de passe   | Rôle                    | Section |
+|------------------|----------------|-------------------------|---------|
+| `admin`          | `admin`        | Administrateur          | —       |
+| `mod`            | `mod`          | Modérateur              | —       |
+| `recrutement`    | `recrutement`  | Cellule recrutement     | —       |
+| `fondateur`      | `fondateur`    | Fondateur (sauvegardes) | —       |
+| `t.bertin`       | `cadre`        | Cadre encadrant         | S21     |
+| `l.costa`        | `cadre`        | Cadre encadrant         | S22     |
+| `l.morel`        | `jeune`        | Jeune volontaire        | S21     |
+| `k.boucher`      | `jeune`        | Jeune volontaire        | S21     |
+| `i.tessier`      | `jeune`        | Jeune volontaire        | S21     |
+| `j.boutet`       | `jeune`        | Jeune volontaire        | S22     |
+| `fam.morel`      | `famille`      | Famille de l.morel (mère) | —     |
+
+> En production, ces comptes seraient supprimés. Tous les nouveaux comptes
+> créés par un admin sont forcés à changer leur mot de passe à la 1ʳᵉ
+> connexion.
+
+---
+
+## 🧱 Architecture
 
 ```
 mon-smv/
-├── index.html               # shell mobile
+├── index.html
 ├── manifest.webmanifest     # PWA
 ├── service-worker.js        # cache offline (stale-while-revalidate)
-├── assets/
-│   ├── styles.css           # design system + écrans
-│   ├── app.js               # routeur hash + tous les écrans
-│   ├── icons.js             # bibliothèque SVG line-icons
-│   ├── data.js              # données pédagogiques (mock)
-│   └── img/
-│       ├── logo.svg         # logo régiment SMV
-│       ├── blob-fluo.svg    # tache verte fluo (charte)
-│       └── blob-dots.svg    # tache trame pointillés
-└── README.md
+├── package.json
+├── scripts/smoke.mjs        # tests DB/auth/admin (28 assertions)
+├── .devcontainer/           # Codespaces : démarre auto sur :8080
+├── .github/workflows/       # déploiement GitHub Pages
+└── assets/
+    ├── styles.css           # design system mobile + admin desktop
+    ├── icons.js             # bibliothèque SVG line-icons (50+)
+    ├── db.js                # DB localStorage + audit + backups
+    ├── auth.js              # PBKDF2 100k it. + génération k.nom
+    ├── seed.js              # seed initial (sections, comptes, ...)
+    ├── screens-admin.js     # panel admin / mod / recrutement / fondateur
+    ├── app.js               # router + écrans utilisateurs
+    └── img/                 # logo SVG + blobs charte graphique
 ```
 
-Pas de framework. Stack volontairement minimale : **HTML + CSS + JS modules** —
-sert directement depuis n'importe quel hébergeur statique (GitHub Pages, Netlify,
-Vercel, S3, etc.). Idéal pour itérer vite avec la cellule communication.
+Stack volontairement minimale : **HTML + CSS + JS modules**, zéro build, zéro
+dépendance runtime. Tout est servable depuis n'importe quel hébergeur statique.
 
 ---
 
-## 🎨 Charte graphique respectée
+## 🔑 Comment la sécurité fonctionne
 
-Source : *Charte graphique du 3ᵉ RSMV*.
+1. **Pré-inscription par admin/mod** : depuis `/admin/utilisateurs/nouveau`,
+   l'admin crée un compte. L'identifiant est généré automatiquement comme
+   `première-lettre-prénom.nom` (ex. `k.goilard`). En cas de collision, on
+   suffixe `.2`, `.3`, etc.
+2. **Mot de passe initial** : 8 caractères aléatoires sans ambiguïté
+   (pas de `0/O`, `1/I/l`). Affiché **une seule fois** dans une modale à
+   l'admin pour transmission au volontaire, puis **non récupérable** (réinit
+   possible à tout moment).
+3. **Hachage** : PBKDF2-SHA256, 100 000 itérations, sel aléatoire 16 octets
+   par utilisateur. Implémenté via Web Crypto (`crypto.subtle.deriveBits`).
+4. **Forçage du changement au 1ᵉʳ login** : le flag `mustChangePassword` est
+   levé jusqu'au premier `changePassword` réussi. Toute tentative de
+   navigation est interceptée vers `#/auth/changer-mdp`.
+5. **Session** : `sessionStorage` (par onglet). Pas de "remember me" en
+   beta — à durcir avec un backend en v1.
 
-| Token        | Valeur     | Usage                                  |
-|--------------|------------|----------------------------------------|
-| `--navy-600` | `#2D3E73`  | Bleu principal (texte, fond foncé)     |
-| `--navy-900` | `#0B1638`  | Fond hero/onboarding                   |
-| `--green-fluo`| `#6FFF53` | Accent · CTA · highlight               |
-| `--green`    | `#3DA435`  | Texte vert, validation                 |
-| `--navy-400` | `#8DA1D3`  | Bleu clair (silhouettes, charte)       |
-| `--red`      | `#A72A1F`  | Alerte, modération                     |
-| `--bg-cream` | `#F4F2EC`  | Fond clair (charte papier)             |
+### ⚠️ Caveats (pour passer en production)
 
-Typographies :
-
-- **Titres** · `Oswald` 600/700 (équivalent libre à l'`Eurostile Condensed Heavy`)
-- **Texte courant** · `Inter` (équivalent libre à `Marianne`)
-- Pour passer à `Marianne` officielle : remplacer dans `styles.css`
-  → `--font-body: 'Marianne', system-ui, …` et inclure
-  `https://www.systeme-de-design.gouv.fr/uploads/Marianne.css`.
-
-Les **taches** (blobs) sont en SVG et reprennent la déclinaison aplat vert fluo
-+ trame pointillés vert mid imposée par la charte (toujours la trame plus foncée
-que l'aplat).
+Le stockage est **localStorage** côté navigateur — donc :
+- 🟠 **Données par appareil**. Pas de synchro entre l'app du jeune et celle
+  du cadre. À remplacer par une vraie API (PostgreSQL/Supabase/Firebase).
+- 🟠 **Hashes côté client**. Le PBKDF2 est correct mais s'exécute dans le
+  navigateur. En production, déléguer à Argon2 côté serveur.
+- 🟠 **Emails non envoyés** : les destinataires configurés dans
+  `/admin/parametres` sont stockés et affichés dans les toasts, mais aucun
+  email réel n'est expédié. À brancher sur SendGrid/Mailjet en v1.
+- 🟠 **Sauvegardes locales** : les 12 snapshots vivent dans `localStorage`
+  — à pousser vers S3/Backblaze côté serveur pour une vraie politique de
+  rétention.
 
 ---
 
 ## 🧭 Parcours utilisateurs
 
-L'app distingue **4 publics** + **2 rôles transverses** (modérateur, admin).
-
-### 🟢 Visiteur (grand public, futur volontaire)
-1. **Onboarding** — `#/`
-2. **Choix du centre** — `#/centre` (pilote = La Rochelle)
-3. **Découverte du dispositif** — `#/decouvrir`
-4. **Galerie** — `#/galerie` (filtres : sport, formation, cérémonies, stage)
-5. **Visite virtuelle** — `#/visite`
-6. **Contact recrutement** — `#/contact` (formulaire RGPD, rappel sous 48h)
+### 🟢 Visiteur (public)
+- `#/` Onboarding
+- `#/decouvrir` Découverte du dispositif
+- `#/galerie` Galerie filtrable
+- `#/visite` Visite virtuelle (URL configurable dans les paramètres)
+- `#/candidature` Formulaire candidature → enregistré en DB, traité depuis l'admin
+- `#/connexion` Login
+- `#/famille/rejoindre` Activation d'un compte famille via code à 6 caractères
 
 ### 🔵 Jeune volontaire
-1. **Accueil** — `#/accueil` (cours du moment, accès rapide, actu)
-2. **Section** — `#/section/calendrier` · `#/section/portfolio` · `#/section/membres`
-3. **Tchat de section** — `#/tchat` (modéré, mention `CADRE`, épinglage)
-4. **Code de la route** — `#/code` (questions, score, leaderboard)
-5. **Mes notes** — `#/notes` + `#/notes/nouveau` (carnet par module)
-6. **Ressources** — `#/ressources` (PDF, vidéos, par module)
-7. **Offres d'emploi** — `#/emploi` + détail `#/emploi/:id`
-8. **Mon profil** — `#/moi` (infos, RGPD, inviter ma famille)
+- `#/accueil`
+- `#/section/calendrier` · `/portfolio` · `/membres`
+- `#/tchat` (messages persistés en DB)
+- `#/code` (questions code de la route)
+- `#/notes` + `#/notes/nouveau` (carnet de notes par module)
+- `#/ressources` (PDF, vidéos, par module)
+- `#/emploi` + `#/emploi/:id`
+- `#/famille/inviter` ← **génère un code à 6 caractères + lien de parenté**
+- `#/moi` (profil, changer mdp, déconnexion)
 
 ### 🟡 Cadre encadrant
-Accès à tout ce qu'un jeune de **sa section** voit, **plus** :
-1. **Pilotage de section** — `#/pilote` (volontaires, signalements, événements)
-2. **Nouvel événement** — `#/pilote/evenement-nouveau` (push, visible famille)
-3. **Modération** — `#/pilote/moderation` (messages signalés, photos à valider)
-4. **Suivi & stats** — `#/pilote/suivi` (présence, code, stages, bien-être)
+Tous les écrans jeune **de sa section** plus :
+- `#/pilote` (KPIs, alertes, présence)
+- `#/pilote/evenement-nouveau` (formulaire planification + push)
+- `#/pilote/moderation` (signalements + photos à valider)
+- `#/pilote/suivi` (stats présence / code / stages / bien-être)
 
-### 🟣 Famille (sur invitation uniquement)
-1. **Photos** de la section où est leur proche — `#/famille/photos`
-2. **Tchat 1:1** avec leur enfant — `#/famille/tchat`
+### 🟣 Famille (sur invitation)
+- `#/famille/photos` (photos de la section, validées par le cadre)
+- `#/famille/tchat` (canal privé avec le volontaire)
+- `#/moi`
 
-### 🔀 Démo
-Depuis l'écran `#/moi`, des boutons permettent de basculer entre les profils
-**Visiteur / Jeune / Cadre / Famille** pour explorer toute l'app sans backend.
+### 🛠 Admin / Modérateur — `#/admin`
+- **Dashboard** : KPIs (volontaires, cadres, familles, candidatures à traiter), activité récente
+- **Utilisateurs** : recherche, créer, modifier, désactiver, supprimer, **réinitialiser mot de passe** (modale qui affiche identifiant + mdp initial)
+- **Candidatures** : pipeline du formulaire public — pré-inscrire en un clic (génère le compte volontaire automatiquement)
+- **Familles** : invitations en attente, comptes famille connectés
+- **Paramètres** : destinataires emails (candidature, signalement, fondateur), téléphone, URLs (site, visite virtuelle, réseaux sociaux), **textes éditoriaux** (titre onboarding, libellés, RGPD)
+- **Audit log** : 200 dernières écritures avec auteur, action et entité
+
+### 🎓 Recrutement — `#/recrutement`
+- **Dashboard** + KPIs
+- **Incorporations** (1 toutes les 2 mois : Jan, Mar, Mai, Jul, Sep, Nov) — ouvrir/fermer, modifier places, supprimer
+- **Formations par incorporation** — CRUD complet (code, nom, durée, capacité)
+- **Candidatures** (accès partagé avec admin)
+
+### 🛡 Fondateur — `#/fondateur/sauvegardes`
+- **12 sauvegardes** maximum (≈ 12 h d'historique)
+- Sauvegarde **automatique toutes les heures** pendant que l'app est ouverte
+- Sauvegarde **manuelle** depuis l'écran
+- **Restauration** : crée d'abord un snapshot de l'état actuel avant de basculer (rollback possible)
 
 ---
 
-## 📱 PWA & installation
+## 🎨 Charte graphique
 
-- `manifest.webmanifest` correctement configuré (start_url, scope, theme).
-- `service-worker.js` en stale-while-revalidate → app **offline-first**.
-- Sur iOS, ajouter à l'écran d'accueil → l'app s'ouvre en plein écran.
+| Token         | Valeur     |
+|---------------|------------|
+| Bleu principal  | `#2D3E73` |
+| Vert fluo       | `#6FFF53` |
+| Vert            | `#3DA435` |
+| Rouge alerte    | `#A72A1F` |
+| Bleu clair      | `#8DA1D3` |
+| Crème (fond clair) | `#F4F2EC` |
 
-### Vers les stores (Capacitor)
-Pour publier sur App Store / Play Store :
+- **Titres** · `Oswald` 600/700 (équivalent libre à `Eurostile Condensed Heavy`)
+- **Texte** · `Inter` (équivalent libre à `Marianne` — bascule documentée en commentaire dans `styles.css`)
+- **Taches "blob" SVG** (aplat fluo + trame pointillés vert mid), exactement comme la charte
+
+---
+
+## 📱 PWA → App Store / Play Store
 
 ```bash
 npm i -D @capacitor/cli @capacitor/core @capacitor/ios @capacitor/android
 npx cap init "Mon SMV" "fr.smv.monsmv" --web-dir=.
 npx cap add ios && npx cap add android
-npx cap copy && npx cap open ios   # Xcode
+npx cap copy && npx cap open ios       # Xcode
 npx cap copy && npx cap open android   # Android Studio
 ```
 
-Aucun changement au code web nécessaire — le shell Capacitor charge `index.html`
-tel quel et les screens deviennent natifs (status bar, safe area, push, etc.).
+Aucun changement de code web requis — le shell Capacitor charge `index.html` tel quel.
 
 ---
 
-## 🧪 Tests manuels (golden path)
+## 🛣 Roadmap v1
 
-- [ ] `#/` → onboarding s'affiche, "Je découvre" emmène vers `#/centre`
-- [ ] `#/centre` → choix La Rochelle → `#/decouvrir`
-- [ ] `#/decouvrir` → stats, parcours, CTA contact + CTA inscription
-- [ ] `#/galerie` → filtres fonctionnels (Tout, Sport, Formation…)
-- [ ] `#/contact` → formulaire submit → toast + retour
-- [ ] `#/login` → bouton démo "Jeune" → `#/accueil` (Léa, S21)
-- [ ] `#/accueil` → tiles cliquables (code, offres, notes, ressources)
-- [ ] `#/section/calendrier` → tabs Calendrier / Portfolio / Membres
-- [ ] `#/tchat` → composer affiche un toast
-- [ ] `#/code` → options sélectionnables, validation
-- [ ] `#/moi` → switch démo Cadre → `#/pilote`
-- [ ] `#/pilote/moderation` → boutons modération → toasts
-- [ ] `#/pilote/suivi` → tabs Présence / Code / Stages / Bien-être
-- [ ] `#/moi` → switch démo Famille → `#/famille/photos`
-- [ ] PWA installable (Chrome DevTools › Application › Manifest)
-- [ ] Offline (Chrome DevTools › Network › Offline → reload)
+1. **Backend** (PostgreSQL + Node/Bun ou Supabase), API REST authentifiée
+2. **Argon2** côté serveur pour le hash
+3. **Push notifications** (FCM/APNs) et envoi réel d'emails (SendGrid)
+4. **Synchro multi-device** + offline-first robuste (CRDT ou TanStack Query)
+5. **WCAG AA** complet (focus visible, contraste, ARIA labels)
+6. **i18n** pour ouvrir l'app aux autres centres SMV (1ᵉʳ, 2ᵉ RSMV…)
+7. **Tests E2E** Playwright sur les 4 parcours utilisateurs
+8. **Stockage médias** (upload signé S3 + EXIF stripping, antivirus ClamAV)
 
 ---
 
-## 🛣 Prochaines étapes (post-maquette)
-
-1. **Backend** : authentification (Keycloak ou Auth gouv.fr), base sectionnée par
-   compagnie/section, modération côté serveur, push (FCM/APNs).
-2. **Médias** : remplacer les blobs SVG par des photos validées par le cadre +
-   pipeline d'upload signé / EXIF stripping côté serveur.
-3. **Marianne** : embarquer la police officielle gouvernementale.
-4. **Tests E2E** : Playwright sur les 4 parcours utilisateurs.
-5. **Accessibilité** : audit WCAG AA, labels ARIA sur la nav, focus visible.
-6. **i18n** : préparer la chaîne pour ouvrir l'app aux autres centres SMV.
-
----
-
-**Référent projet** · Killian, opérateur des métiers de l'image · cellule
-communication · 3ᵉ RSMV.
+**Référent projet** · Killian, opérateur des métiers de l'image · cellule communication · 3ᵉ RSMV.

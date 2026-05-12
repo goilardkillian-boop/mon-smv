@@ -1,7 +1,8 @@
 {
   "name": "mon-smv",
-  "version": "0.1.0",
+  "version": "0.2.0-beta",
   "private": true,
+  "type": "module",
   "description": "Mon SMV · application du 3ᵉ RSMV (La Rochelle, caserne Beauregard).",
   "scripts": {
     "start": "python3 -m http.server 8080",
