@@ -2,7 +2,7 @@
    Mon SMV · Service Worker · cache-first pour les assets
    Version cassée à chaque déploiement pour invalider le cache.
    ============================================================ */
-const VERSION = 'mon-smv-v1';
+const VERSION = 'mon-smv-v2';
 const CORE = [
   './',
   './index.html',
@@ -10,7 +10,10 @@ const CORE = [
   './assets/styles.css',
   './assets/app.js',
   './assets/icons.js',
-  './assets/data.js',
+  './assets/db.js',
+  './assets/auth.js',
+  './assets/seed.js',
+  './assets/screens-admin.js',
   './assets/img/logo.svg',
   './assets/img/blob-fluo.svg',
   './assets/img/blob-dots.svg',
