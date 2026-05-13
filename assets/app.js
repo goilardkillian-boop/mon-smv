@@ -347,9 +347,12 @@ function screenConnexion() {
 
         <div class="demo-creds">
           <strong>Comptes de démonstration</strong><br/>
-          jeune <strong>l.morel</strong> · cadre <strong>t.bertin</strong> · famille <strong>fam.morel</strong><br/>
-          modérateur <strong>mod</strong> · admin <strong>admin</strong> · recrutement <strong>recrutement</strong> · fondateur <strong>fondateur</strong><br/>
-          Le mot de passe est le rôle (ex. <strong>jeune</strong>, <strong>admin</strong>, etc.).
+          • admin <strong>admin</strong> / <strong>admin123</strong><br/>
+          • modérateur <strong>mod</strong> / <strong>mod1234</strong><br/>
+          • recrutement <strong>recrutement</strong> / <strong>recrutement</strong><br/>
+          • fondateur <strong>fondateur</strong> / <strong>fondateur</strong><br/>
+          • cadre <strong>t.bertin</strong> / <strong>cadre1</strong><br/>
+          • jeune <strong>l.morel</strong> / <strong>jeune1</strong><br/>
         </div>
       </div>
     </section>`;
