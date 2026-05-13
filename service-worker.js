@@ -1,8 +1,8 @@
 /* ============================================================
-   Mon SMV · Service Worker · cache-first pour les assets
-   Version cassée à chaque déploiement pour invalider le cache.
+   Mon SMV · Service Worker · stale-while-revalidate pour les assets statiques.
+   On ne cache PAS les appels Supabase (toujours en réseau).
    ============================================================ */
-const VERSION = 'mon-smv-v4';
+const VERSION = 'mon-smv-v5';
 const CORE = [
   './',
   './index.html',
@@ -13,6 +13,7 @@ const CORE = [
   './assets/db.js',
   './assets/auth.js',
   './assets/seed.js',
+  './assets/supabase-client.js',
   './assets/screens-admin.js',
   './assets/img/logo.svg',
   './assets/img/blob-fluo.svg',
@@ -34,7 +35,17 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
-  // Stale-while-revalidate
+
+  // Ne PAS cacher Supabase ni esm.sh (toujours en réseau)
+  if (url.hostname.endsWith('supabase.co') ||
+      url.hostname.endsWith('supabase.in') ||
+      url.hostname.includes('esm.sh') ||
+      url.hostname.includes('googleapis.com') ||
+      url.hostname.includes('gstatic.com')) {
+    return; // navigateur gère normalement
+  }
+
+  // Cache stale-while-revalidate pour les assets locaux
   e.respondWith(
     caches.open(VERSION).then(async (cache) => {
       const cached = await cache.match(e.request);

@@ -9,14 +9,18 @@
 
 import { ICONS } from './icons.js';
 import {
-  db, getBackups, restoreBackup, backupNow, deleteBackup, tickAutoBackup, onChange, uid, getLogoUrl, logAction,
+  db, onChange, getLogoUrl, logAction,
+  getBackups, backupNow, restoreBackup, deleteBackup,
 } from './db.js';
 import {
-  createUser, login as authLogin, logout as authLogout, changePassword,
+  initAuth, onAuthChange,
+  login as authLogin, logout as authLogout, changePassword,
   resetPasswordByAdmin, currentUser, ROLES_LABELS, RELATIONSHIPS,
   canAccessAdmin, canAccessBackups, canAccessRecrutement, slug, genInviteCode,
+  createUser,
 } from './auth.js';
 import { seedIfEmpty } from './seed.js';
+import { supabase } from './supabase-client.js';
 import * as Admin from './screens-admin.js';
 
 /* ----------------------------------------------------------
@@ -1259,7 +1263,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('[data-action="user-toggle-active"]')) {
     const id = e.target.closest('[data-action="user-toggle-active"]').getAttribute('data-id');
     const u = db.byId('users', id);
-    db.update('users', id, { active: !u.active });
+    await db.update('users', id, { active: !u.active });
     toast(u.active ? 'Compte désactivé' : 'Compte réactivé');
     return;
   }
@@ -1267,7 +1271,7 @@ document.addEventListener('click', async (e) => {
     const id = e.target.closest('[data-action="user-delete"]').getAttribute('data-id');
     const u = db.byId('users', id);
     if (!confirm(`Supprimer définitivement le compte ${u.username} ? Cette action est tracée dans l'audit log.`)) return;
-    db.remove('users', id);
+    await db.remove('users', id);
     toast('Compte supprimé');
     return;
   }
@@ -1278,17 +1282,17 @@ document.addEventListener('click', async (e) => {
     const c = db.byId('candidatures', id);
     if (!confirm(`Pré-inscrire ${c.firstName} ${c.lastName} comme jeune volontaire ?`)) return;
     const { user: u, initialPassword } = await createUser({ firstName: c.firstName, lastName: c.lastName, email: c.email, role: 'jeune' });
-    db.update('candidatures', id, { status: 'traitee', linkedUserId: u.id });
+    await db.update('candidatures', id, { status: 'traitee', linkedUserId: u.id });
     showResetPasswordModal(u, initialPassword);
     return;
   }
   if (e.target.closest('[data-action="cand-accept"]')) {
-    db.update('candidatures', e.target.closest('[data-action="cand-accept"]').getAttribute('data-id'), { status: 'traitee' });
+    await db.update('candidatures', e.target.closest('[data-action="cand-accept"]').getAttribute('data-id'), { status: 'traitee' });
     toast('Candidature marquée traitée');
     return;
   }
   if (e.target.closest('[data-action="cand-reject"]')) {
-    db.update('candidatures', e.target.closest('[data-action="cand-reject"]').getAttribute('data-id'), { status: 'rejetee' });
+    await db.update('candidatures', e.target.closest('[data-action="cand-reject"]').getAttribute('data-id'), { status: 'rejetee' });
     toast('Candidature rejetée');
     return;
   }
@@ -1297,7 +1301,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('[data-action="inv-revoke"]')) {
     const id = e.target.closest('[data-action="inv-revoke"]').getAttribute('data-id');
     if (!confirm('Révoquer cette invitation ?')) return;
-    db.update('invitations', id, { status: 'expiree' });
+    await db.update('invitations', id, { status: 'expiree' });
     return;
   }
 
@@ -1306,7 +1310,7 @@ document.addEventListener('click', async (e) => {
     const label = prompt('Libellé de la nouvelle incorporation (ex: Mai 2027)');
     if (!label) return;
     const sl = slug(label) || ('inco-' + Date.now());
-    db.insert('incorporations', { label, slug: sl, open: true, seats: 132, seatsTaken: 0 });
+    await db.insert('incorporations', { label, slug: sl, open: true, seats: 132, seatsTaken: 0 });
     toast('Incorporation ajoutée');
     return;
   }
@@ -1317,14 +1321,16 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('[data-action="inco-toggle"]')) {
     const id = e.target.closest('[data-action="inco-toggle"]').getAttribute('data-id');
     const i = db.byId('incorporations', id);
-    db.update('incorporations', id, { open: !i.open });
+    await db.update('incorporations', id, { open: !i.open });
     return;
   }
   if (e.target.closest('[data-action="inco-delete"]')) {
     const id = e.target.closest('[data-action="inco-delete"]').getAttribute('data-id');
     if (!confirm('Supprimer cette incorporation et ses formations ?')) return;
-    db.filter('formations', (f) => f.incorporationId === id).forEach((f) => db.remove('formations', f.id));
-    db.remove('incorporations', id);
+    for (const f of db.filter('formations', (g) => g.incorporationId === id)) {
+      await db.remove('formations', f.id);
+    }
+    await db.remove('incorporations', id);
     return;
   }
   if (e.target.closest('[data-action="formation-add"]')) {
@@ -1334,20 +1340,20 @@ document.addEventListener('click', async (e) => {
     const name = prompt('Nom complet ?'); if (!name) return;
     const duration = prompt('Durée ?', '3 mois'); if (!duration) return;
     const capacity = parseInt(prompt('Capacité ?', '12'), 10) || 12;
-    db.insert('formations', { incorporationId: incoId, code, name, duration, capacity });
+    await db.insert('formations', { incorporationId: incoId, code, name, duration, capacity });
     return;
   }
   if (e.target.closest('[data-action="formation-edit"]')) {
     const id = e.target.closest('[data-action="formation-edit"]').getAttribute('data-id');
     const f = db.byId('formations', id);
     const name = prompt('Nom de la formation', f.name); if (!name) return;
-    db.update('formations', id, { name });
+    await db.update('formations', id, { name });
     return;
   }
   if (e.target.closest('[data-action="formation-delete"]')) {
     const id = e.target.closest('[data-action="formation-delete"]').getAttribute('data-id');
     if (!confirm('Supprimer cette formation ?')) return;
-    db.remove('formations', id);
+    await db.remove('formations', id);
     return;
   }
 
@@ -1380,7 +1386,7 @@ document.addEventListener('click', async (e) => {
   // Reset logo (admin settings)
   if (e.target.closest('[data-action="logo-reset"]')) {
     if (!confirm('Réinitialiser le logo par défaut ?')) return;
-    db.setSettings({ logoUrl: '' });
+    await db.setSettings({ logoUrl: '' });
     updateFavicon();
     toast('Logo réinitialisé');
     return;
@@ -1399,7 +1405,7 @@ document.addEventListener('click', async (e) => {
       alert('Une section avec ce code existe déjà.');
       return;
     }
-    db.insert('sections', { code: code.toUpperCase(), name, compagnie, description: compagnie + 'ᵉ compagnie' });
+    await db.insert('sections', { code: code.toUpperCase(), name, compagnie, description: compagnie + 'ᵉ compagnie' });
     toast('Section créée');
     return;
   }
@@ -1411,7 +1417,7 @@ document.addEventListener('click', async (e) => {
     if (name == null) return;
     const compagnie = parseInt(prompt('Compagnie ?', s.compagnie), 10);
     if (!compagnie || isNaN(compagnie)) return;
-    db.update('sections', id, { name, compagnie, description: compagnie + 'ᵉ compagnie' });
+    await db.update('sections', id, { name, compagnie, description: compagnie + 'ᵉ compagnie' });
     toast('Section mise à jour');
     return;
   }
@@ -1422,9 +1428,9 @@ document.addEventListener('click', async (e) => {
     const members = db.filter('users', (u) => u.section === s.code);
     if (members.length > 0) {
       if (!confirm(`Cette section a ${members.length} membre(s). En la supprimant, ils seront désaffectés. Continuer ?`)) return;
-      members.forEach((m) => db.update('users', m.id, { section: null }));
+      for (const m of members) await db.update("users", m.id, { section: null });
     } else if (!confirm(`Supprimer la section ${s.code} ?`)) return;
-    db.remove('sections', id);
+    await db.remove('sections', id);
     toast('Section supprimée');
     return;
   }
@@ -1450,30 +1456,36 @@ document.addEventListener('click', async (e) => {
   }
 });
 
-// Upload de logo : lecture en data-URL
-document.addEventListener('change', (e) => {
+// Upload de logo : upload sur Supabase Storage bucket "logos"
+document.addEventListener('change', async (e) => {
   const upl = e.target.closest('[data-logo-upload]');
   if (!upl) return;
   const file = upl.files && upl.files[0];
   if (!file) return;
-  const MAX = 500 * 1024; // 500 Ko
-  if (file.size > MAX) {
-    toast('Image trop grande (max 500 Ko)');
-    upl.value = '';
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = () => {
-    db.setSettings({ logoUrl: reader.result });
+  const MAX = 500 * 1024;
+  if (file.size > MAX) { toast('Image trop grande (max 500 Ko)'); upl.value = ''; return; }
+  toast('Upload du logo…');
+  try {
+    // 1. Upload sur Supabase Storage
+    const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+    const path = `logo-${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('logos').upload(path, file, { upsert: true, contentType: file.type });
+    if (upErr) throw upErr;
+    // 2. Récupérer l'URL publique
+    const { data: pub } = supabase.storage.from('logos').getPublicUrl(path);
+    const url = pub.publicUrl;
+    // 3. Stocker dans les settings
+    await db.setSettings({ logoUrl: url });
     updateFavicon();
-    toast('Logo mis à jour');
-    // refresh preview without full re-render
+    toast('Logo mis à jour ✓');
     const prev = document.getElementById('logo-preview');
-    if (prev) prev.src = reader.result;
+    if (prev) prev.src = url;
     render();
-  };
-  reader.onerror = () => toast('Lecture du fichier impossible');
-  reader.readAsDataURL(file);
+  } catch (err) {
+    console.error(err);
+    toast(`Erreur : ${err.message || 'upload impossible'}`);
+  }
+  upl.value = '';
 });
 
 // Filtres audit log
@@ -1525,7 +1537,7 @@ document.addEventListener('submit', async (e) => {
 
   switch (kind) {
     case 'candidature': {
-      db.insert('candidatures', {
+      await db.insert('candidatures', {
         firstName: data.firstName, lastName: data.lastName,
         age: parseInt(data.age, 10), postalCode: data.postalCode,
         goal: data.goal, email: data.email, phone: data.phone,
@@ -1573,7 +1585,7 @@ document.addEventListener('submit', async (e) => {
 
     case 'note': {
       const u = currentUser();
-      db.insert('notes', { userId: u.id, title: data.title, content: data.content, module: data.module });
+      await db.insert('notes', { userId: u.id, title: data.title, content: data.content, module: data.module });
       toast('Note enregistrée');
       location.hash = '#/notes';
       break;
@@ -1583,7 +1595,7 @@ document.addEventListener('submit', async (e) => {
       const u = currentUser();
       if (!(data.text || '').trim()) return;
       const channel = form.getAttribute('data-channel') || u.section;
-      db.insert('messages', { channel, userId: u.id, text: data.text.trim(), at: new Date().toISOString() });
+      await db.insert('messages', { channel, userId: u.id, text: data.text.trim(), at: new Date().toISOString() });
       form.reset();
       break;
     }
@@ -1597,7 +1609,7 @@ document.addEventListener('submit', async (e) => {
     case 'famille-invite': {
       const u = currentUser();
       const code = genInviteCode();
-      db.insert('invitations', {
+      await db.insert('invitations', {
         jeuneId: u.id, code, relationship: data.relationship, email: data.email || '',
         status: 'pending',
       });
@@ -1618,7 +1630,7 @@ document.addEventListener('submit', async (e) => {
       });
       // remplacer le mot de passe initial par celui choisi
       await changePassword(u.id, data.password);
-      db.update('invitations', inv.id, { status: 'utilisee', usedBy: u.id });
+      await db.update('invitations', inv.id, { status: 'utilisee', usedBy: u.id });
       // login auto
       const r = await authLogin(u.username, data.password);
       ui.banner = null;
@@ -1629,7 +1641,7 @@ document.addEventListener('submit', async (e) => {
     case 'admin-user': {
       const id = form.getAttribute('data-id');
       if (id) {
-        db.update('users', id, {
+        await db.update('users', id, {
           firstName: data.firstName, lastName: data.lastName,
           email: data.email, section: data.section || null,
           role: data.role, incorporation: data.incorporation || null,
@@ -1671,14 +1683,14 @@ document.addEventListener('submit', async (e) => {
         candidatureMessage: data.candidatureMessage,
         rgpdMention: data.rgpdMention,
       };
-      db.setSettings(patch);
+      await db.setSettings(patch);
       toast('Paramètres enregistrés');
       break;
     }
 
     case 'inco-edit': {
       const id = form.getAttribute('data-id');
-      db.update('incorporations', id, {
+      await db.update('incorporations', id, {
         label: data.label,
         seats: parseInt(data.seats, 10) || 0,
         open: !!data.open,
@@ -1689,7 +1701,7 @@ document.addEventListener('submit', async (e) => {
 
     case 'event-new': {
       const u = currentUser();
-      db.insert('events', {
+      await db.insert('events', {
         sec: data.sec || u.section,
         day: data.day, time: data.time,
         title: data.title, sub: data.sub || '',
@@ -1752,7 +1764,6 @@ function showResetPasswordModal(user, password) {
    ============================================================ */
 function updateFavicon() {
   const url = getLogoUrl();
-  // Remplacer/insérer <link rel="icon">
   let link = document.querySelector('link[rel="icon"]');
   if (!link) {
     link = document.createElement('link');
@@ -1760,10 +1771,9 @@ function updateFavicon() {
     document.head.appendChild(link);
   }
   link.href = url;
-  // Type adapté
-  if (url.startsWith('data:image/svg')) link.type = 'image/svg+xml';
-  else if (url.startsWith('data:image/png')) link.type = 'image/png';
-  else if (url.startsWith('data:image/jpeg')) link.type = 'image/jpeg';
+  if (url.startsWith('data:image/svg') || url.endsWith('.svg')) link.type = 'image/svg+xml';
+  else if (url.startsWith('data:image/png') || url.endsWith('.png')) link.type = 'image/png';
+  else if (url.startsWith('data:image/jpeg') || url.endsWith('.jpg') || url.endsWith('.jpeg')) link.type = 'image/jpeg';
   else link.removeAttribute('type');
 }
 
@@ -1771,17 +1781,47 @@ function updateFavicon() {
    BOOT
    ============================================================ */
 async function boot() {
-  await seedIfEmpty();
-  updateFavicon();
-  // backup au démarrage si plus d'1h
-  tickAutoBackup();
-  setInterval(tickAutoBackup, 60 * 1000);
-  // Service worker (PWA)
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}));
+  // Loader visuel pendant le chargement initial
+  $app.innerHTML = `
+    <section class="screen screen--dark" style="display: grid; place-items: center; min-height: 100dvh;">
+      <div style="text-align: center; color: var(--white);">
+        <div style="font-family: var(--font-display); font-size: 24px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 8px;">Mon SMV</div>
+        <div style="font-family: var(--font-mono); font-size: 11px; color: rgba(255,255,255,.5); letter-spacing: .12em; text-transform: uppercase;">Chargement…</div>
+      </div>
+    </section>`;
+
+  try {
+    // 1. Bootstrap auth (charge la session si elle existe, charge les données)
+    await initAuth();
+
+    // 2. Seed au tout premier lancement
+    await seedIfEmpty();
+
+    // 3. Mettre à jour le favicon
+    updateFavicon();
+
+    // 4. Réagir aux changements d'auth → re-render
+    onAuthChange(() => { updateFavicon(); render(); });
+    onChange(() => render());
+
+    // 5. Service worker (PWA)
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}));
+    }
+
+    // 6. Route initiale
+    if (!location.hash) location.hash = '#/';
+    render();
+  } catch (e) {
+    console.error('Boot failed:', e);
+    $app.innerHTML = `
+      <section class="screen screen--dark" style="display: grid; place-items: center; min-height: 100dvh; padding: 24px;">
+        <div style="text-align: center; color: var(--white); max-width: 360px;">
+          <div style="font-family: var(--font-display); font-size: 24px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 12px; color: var(--red);">Erreur de chargement</div>
+          <div style="font-family: var(--font-mono); font-size: 12px; color: rgba(255,255,255,.7); line-height: 1.5;">${(e && e.message) || 'Impossible de joindre Supabase'}</div>
+          <button class="btn btn--fluo" style="margin-top: 20px;" onclick="location.reload()">Réessayer</button>
+        </div>
+      </section>`;
   }
-  // route initiale
-  if (!location.hash) location.hash = '#/';
-  render();
 }
 boot();

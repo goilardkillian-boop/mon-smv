@@ -1,20 +1,17 @@
 /* ============================================================
    Mon SMV · Seed
-   Initialise la DB au premier lancement :
-   - 6 sections (S11..S23)
-   - 6 incorporations sur 1 an (Jan, Mar, Mai, Jul, Sep, Nov)
-   - Formations par défaut
-   - Comptes administrateur, fondateur, modérateur, recrutement, 2 cadres,
-     une poignée de volontaires, une famille
-   - Quelques actualités, offres d'emploi, événements de planning
+   Bootstrap automatique au tout premier lancement contre Supabase.
+   - Tente d'abord de se connecter en admin
+   - Si admin n'existe pas → signUp admin → seed sections/incos/etc.
+   - Crée les comptes de démo (fondateur, mod, recrutement, cadres,
+     jeunes, famille)
+   - Met un flag `seeded=true` dans settings pour ne pas recommencer
    ============================================================ */
 
+import { supabase, usernameToEmail } from './supabase-client.js';
 import { db } from './db.js';
-import { makeCredentials } from './auth.js';
 
-const SEED_FLAG_KEY = 'mon-smv:seeded:v2';
-
-const INCO_MONTHS = [0, 2, 4, 6, 8, 10]; // janv, mars, mai, juil, sept, nov
+const INCO_MONTHS = [0, 2, 4, 6, 8, 10];
 const MOIS_LABELS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 
 function nextIncorporations(count = 6) {
@@ -22,7 +19,6 @@ function nextIncorporations(count = 6) {
   const out = [];
   let y = now.getFullYear();
   let m = now.getMonth();
-  // démarre à la prochaine incorporation passée ou en cours
   let i = INCO_MONTHS.findIndex((x) => x >= m);
   if (i < 0) { i = 0; y += 1; }
   for (let k = 0; k < count; k++) {
@@ -34,139 +30,170 @@ function nextIncorporations(count = 6) {
   return out;
 }
 
-async function makeUser({ firstName, lastName, role, username, password, section = null, incorporation = null, email = '', founder = false, mustChangePassword = false }) {
-  const { salt, hash } = await makeCredentials(password);
-  return db.insert('users', {
-    username, firstName, lastName, email,
-    role, section, incorporation, founder,
-    salt, hash, mustChangePassword,
-    initialPassword: mustChangePassword ? password : null,
-    initialPasswordShown: mustChangePassword,
-    active: true,
-    family: null,
-  }, { silent: true });
+const DEMO_USERS = [
+  { username: 'admin',        password: 'admin',        firstName: 'Sophie',  lastName: 'Durand',   role: 'admin',       email: 'admin@smv.gouv.fr' },
+  { username: 'fondateur',    password: 'fondateur',    firstName: 'Marc',    lastName: 'Lefevre',  role: 'fondateur',   email: 'fondateur@smv.gouv.fr', founder: true },
+  { username: 'mod',          password: 'mod',          firstName: 'Julien',  lastName: 'Roche',    role: 'moderateur',  email: 'moderation@smv.gouv.fr' },
+  { username: 'recrutement',  password: 'recrutement',  firstName: 'Claire',  lastName: 'Vidal',    role: 'recrutement', email: 'recrutement@smv.gouv.fr' },
+  { username: 't.bertin',     password: 'cadre',        firstName: 'Thomas',  lastName: 'Bertin',   role: 'cadre', section: 'S21', email: 't.bertin@smv.gouv.fr' },
+  { username: 'l.costa',      password: 'cadre',        firstName: 'Léonie',  lastName: 'Costa',    role: 'cadre', section: 'S22', email: 'l.costa@smv.gouv.fr' },
+  { username: 'l.morel',      password: 'jeune',        firstName: 'Léa',     lastName: 'Morel',    role: 'jeune', section: 'S21', email: 'l.morel@smv.gouv.fr' },
+  { username: 'k.boucher',    password: 'jeune',        firstName: 'Karim',   lastName: 'Boucher',  role: 'jeune', section: 'S21', email: 'k.boucher@smv.gouv.fr' },
+  { username: 'i.tessier',    password: 'jeune',        firstName: 'Inès',    lastName: 'Tessier',  role: 'jeune', section: 'S21', email: 'i.tessier@smv.gouv.fr' },
+  { username: 'j.boutet',     password: 'jeune',        firstName: 'Julien',  lastName: 'Boutet',   role: 'jeune', section: 'S22', email: 'j.boutet@smv.gouv.fr' },
+];
+
+async function trySignUpDemo(u) {
+  const email = usernameToEmail(u.username);
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password: u.password,
+    options: {
+      data: {
+        username: u.username,
+        first_name: u.firstName,
+        last_name: u.lastName,
+        role: u.role,
+      },
+    },
+  });
+  if (error) {
+    // déjà existant : on essaie de se connecter (pour récupérer l'id)
+    if (/already/i.test(error.message) || /registered/i.test(error.message)) {
+      const { data: l } = await supabase.auth.signInWithPassword({ email, password: u.password });
+      return l?.user?.id || null;
+    }
+    throw error;
+  }
+  return data?.user?.id || null;
 }
 
-export async function seedIfEmpty() {
-  if (localStorage.getItem(SEED_FLAG_KEY)) return false;
-  if (db.all('users').length > 0) {
-    localStorage.setItem(SEED_FLAG_KEY, '1');
-    return false;
-  }
+async function completeProfile(userId, u) {
+  const patch = { must_change_password: false }; // pour démo, pas de forçage
+  if (u.section) patch.section = u.section;
+  if (u.email) patch.email = u.email;
+  if (u.founder) patch.founder = true;
+  await supabase.from('profiles').update(patch).eq('id', userId);
+}
 
-  /* ---------- Sections ---------- */
-  ['S11','S12','S13','S21','S22','S23'].forEach((code, i) => {
-    db.insert('sections', {
-      code,
-      compagnie: i < 3 ? 1 : 2,
-      name: `Section ${code}`,
+async function isSeeded() {
+  // On vérifie via la table settings (publique en lecture)
+  const { data } = await supabase.from('settings').select('value').eq('key', 'seeded').maybeSingle();
+  return !!(data && data.value === true);
+}
+
+async function markSeeded() {
+  await supabase.from('settings').upsert({ key: 'seeded', value: true }, { onConflict: 'key' });
+}
+
+/* -------- Seed sections / incorporations / formations / news / jobs -------- */
+async function seedReferenceData() {
+  // Sections
+  const { count: sCount } = await supabase.from('sections').select('*', { count: 'exact', head: true });
+  if (!sCount) {
+    const sections = ['S11','S12','S13','S21','S22','S23'].map((code, i) => ({
+      code, name: `Section ${code}`, compagnie: i < 3 ? 1 : 2,
       description: i < 3 ? '1ʳᵉ compagnie' : '2ᵉ compagnie',
-    }, { silent: true });
-  });
-
-  /* ---------- Incorporations + formations ---------- */
-  const incos = nextIncorporations(6);
-  const formationsBase = [
-    { code: 'AUTO',  name: 'Auto-école · permis B',     capacity: 24, duration: '4 mois' },
-    { code: 'MECA',  name: 'Atelier mécanique VL',      capacity: 12, duration: '3 mois' },
-    { code: 'LOG',   name: 'Logistique & manutention',  capacity: 18, duration: '3 mois' },
-    { code: 'REST',  name: 'Restauration collective',   capacity: 10, duration: '3 mois' },
-    { code: 'BAT',   name: 'Bâtiment second œuvre',     capacity: 12, duration: '3 mois' },
-    { code: 'SECU',  name: 'Sécurité privée',           capacity: 14, duration: '2 mois' },
-  ];
-  incos.forEach((i) => {
-    const inco = db.insert('incorporations', {
-      ...i,
-      open: true,
-      seats: 132,
-      seatsTaken: Math.floor(Math.random() * 90),
-    }, { silent: true });
-    // 4 formations par incorporation par défaut
-    formationsBase.slice(0, 4).forEach((f) => {
-      db.insert('formations', { ...f, incorporationId: inco.id }, { silent: true });
-    });
-  });
-
-  /* ---------- Comptes par défaut ---------- */
-  // Tous avec mots de passe simples pour la démo. Ils peuvent les changer ensuite.
-  // Le `mustChangePassword: false` pour les comptes de démo afin que le PR soit
-  // immédiatement testable. En prod il faudrait mettre true partout.
-  await makeUser({ username: 'fondateur',  firstName: 'Marc',    lastName: 'Lefevre',  role: 'fondateur', password: 'fondateur', founder: true, email: 'fondateur@smv.gouv.fr' });
-  await makeUser({ username: 'admin',      firstName: 'Sophie',  lastName: 'Durand',   role: 'admin',     password: 'admin',      email: 'admin@smv.gouv.fr' });
-  await makeUser({ username: 'mod',        firstName: 'Julien',  lastName: 'Roche',    role: 'moderateur',password: 'mod',        email: 'moderation@smv.gouv.fr' });
-  await makeUser({ username: 'recrutement',firstName: 'Claire',  lastName: 'Vidal',    role: 'recrutement',password: 'recrutement', email: 'recrutement@smv.gouv.fr' });
-  await makeUser({ username: 't.bertin',   firstName: 'Thomas',  lastName: 'Bertin',   role: 'cadre',     password: 'cadre', section: 'S21', email: 't.bertin@smv.gouv.fr' });
-  await makeUser({ username: 'l.costa',    firstName: 'Léonie',  lastName: 'Costa',    role: 'cadre',     password: 'cadre', section: 'S22', email: 'l.costa@smv.gouv.fr' });
-
-  const incoCurrent = db.all('incorporations')[0];
-  await makeUser({ username: 'l.morel',    firstName: 'Léa',     lastName: 'Morel',    role: 'jeune', password: 'jeune', section: 'S21', incorporation: incoCurrent?.slug, email: 'l.morel@smv.gouv.fr' });
-  await makeUser({ username: 'k.boucher',  firstName: 'Karim',   lastName: 'Boucher',  role: 'jeune', password: 'jeune', section: 'S21', incorporation: incoCurrent?.slug, email: 'k.boucher@smv.gouv.fr' });
-  await makeUser({ username: 'i.tessier',  firstName: 'Inès',    lastName: 'Tessier',  role: 'jeune', password: 'jeune', section: 'S21', incorporation: incoCurrent?.slug, email: 'i.tessier@smv.gouv.fr' });
-  await makeUser({ username: 'j.boutet',   firstName: 'Julien',  lastName: 'Boutet',   role: 'jeune', password: 'jeune', section: 'S22', incorporation: incoCurrent?.slug, email: 'j.boutet@smv.gouv.fr' });
-
-  // Famille de Léa
-  const lea = db.find('users', (u) => u.username === 'l.morel');
-  if (lea) {
-    const { salt, hash } = await makeCredentials('famille');
-    db.insert('users', {
-      username: 'fam.morel',
-      firstName: 'Christelle', lastName: 'Morel',
-      role: 'famille', section: null, incorporation: null,
-      family: { of: lea.id, relationship: 'mere' },
-      salt, hash,
-      email: 'c.morel@email.fr',
-      mustChangePassword: false,
-      active: true,
-    }, { silent: true });
+    }));
+    await supabase.from('sections').insert(sections);
   }
 
-  /* ---------- Actualités ---------- */
-  [
-    { date: '11/05', title: 'Cérémonie remise de calot · CAPI 2026', excerpt: 'Vendredi 16 mai, place d\'armes Beauregard.', kind: 'navy' },
-    { date: '10/05', title: 'Nouveau partenaire · Carrefour Logistique', excerpt: '4 contrats d\'apprentissage à pourvoir.', kind: 'green' },
-    { date: '08/05', title: 'Marche commémorative · 80 ans', excerpt: 'Avec les écoles de La Rochelle.', kind: 'lightblue' },
-  ].forEach((n) => db.insert('news', { ...n, published: true }, { silent: true }));
-
-  /* ---------- Offres ---------- */
-  [
-    { type: 'Alternance', title: 'Mécanicien VL · alternance', company: 'Carrosserie Lemoine', city: 'La Rochelle (17)', tags: ['Permis B','Mécanique','CAP'], description: 'Tu sors de formation SMV, tu as ton permis B et l\'envie d\'apprendre un métier de terrain.', email: 'rh@lemoine.fr' },
-    { type: 'CDI', title: 'Préparateur de commandes', company: 'Carrefour Logistique', city: 'Aytré (17)', tags: ['Permis CACES','Équipe','2x8'], description: 'Préparation de commandes en équipe 2x8.', email: 'rh@carrefour-log.fr' },
-    { type: 'CDD', title: 'Commis de cuisine', company: 'Mess officiers Marine', city: 'Rochefort (17)', tags: ['Restauration','HACCP'], description: 'Commis dans un mess officiers.', email: 'rh@mess-marine.fr' },
-    { type: 'Apprentissage', title: 'Apprenti menuisier', company: 'Bois Pallice', city: 'La Pallice (17)', tags: ['CAP','Manuel','Permis B'], description: 'Atelier menuiserie, équipe de 5.', email: 'rh@bois-pallice.fr' },
-    { type: 'CDI', title: 'Agent de sécurité portuaire', company: 'Securitas Port', city: 'La Pallice (17)', tags: ['SST','Permis B','Nuit'], description: 'Sécurité portuaire en équipe nuit.', email: 'rh@securitas-port.fr' },
-  ].forEach((j) => db.insert('jobs', { ...j, published: true, posted: 'récente' }, { silent: true }));
-
-  /* ---------- Events (planning de la S21 sur Mardi 13) ---------- */
-  [
-    { sec: 'S21', day: '2026-05-12', time: '06:30', title: 'Réveil & sport', sub: 'Stade · toute la section' },
-    { sec: 'S21', day: '2026-05-12', time: '09:00', title: 'Auto-école · Code', sub: 'Salle 2 · Sgt Bertin' },
-    { sec: 'S21', day: '2026-05-12', time: '10:00', title: 'Sport collectif', sub: 'Stade · S21' },
-    { sec: 'S21', day: '2026-05-12', time: '12:00', title: 'Repas', sub: 'Mess' },
-    { sec: 'S21', day: '2026-05-12', time: '14:00', title: 'Atelier insertion', sub: 'Salle 5 · cellule emploi' },
-    { sec: 'S21', day: '2026-05-12', time: '17:00', title: 'Sport individuel', sub: 'Salle de muscu' },
-    { sec: 'S21', day: '2026-05-13', time: '14:00', title: 'Visite Carrefour Logistique', sub: 'Aytré · zone Atlantique', type: 'sortie' },
-  ].forEach((e) => db.insert('events', e, { silent: true }));
-
-  /* ---------- Messages ---------- */
-  if (lea) {
-    const tb = db.find('users', (u) => u.username === 't.bertin');
-    const kb = db.find('users', (u) => u.username === 'k.boucher');
-    const it = db.find('users', (u) => u.username === 'i.tessier');
-    [
-      { channel: 'S21', userId: tb?.id, text: "Demain 14h00 : briefing visite entreprise. Tenue de service, calots.", at: '2026-05-12T08:02:00Z' },
-      { channel: 'S21', userId: lea.id, text: 'Reçu sergent 👍', at: '2026-05-12T08:14:00Z' },
-      { channel: 'S21', userId: kb?.id, text: "Quelqu'un a perdu un brassard rouge salle 3 hier ?", at: '2026-05-12T08:21:00Z' },
-      { channel: 'S21', userId: lea.id, text: "Oui c'est à moi merci !", at: '2026-05-12T08:22:00Z' },
-      { channel: 'S21', userId: it?.id, text: "Le code 47 c'est lequel déjà ?", at: '2026-05-12T09:01:00Z' },
-    ].forEach((m) => db.insert('messages', m, { silent: true }));
+  // Incorporations + formations
+  const { count: iCount } = await supabase.from('incorporations').select('*', { count: 'exact', head: true });
+  if (!iCount) {
+    const incos = nextIncorporations(6).map((i) => ({
+      slug: i.slug, label: i.label, year: i.year, month: i.month,
+      seats: 132, seats_taken: Math.floor(Math.random() * 90), open: true,
+    }));
+    const { data: created } = await supabase.from('incorporations').insert(incos).select();
+    const formationsBase = [
+      { code: 'AUTO',  name: 'Auto-école · permis B',     capacity: 24, duration: '4 mois' },
+      { code: 'MECA',  name: 'Atelier mécanique VL',      capacity: 12, duration: '3 mois' },
+      { code: 'LOG',   name: 'Logistique & manutention',  capacity: 18, duration: '3 mois' },
+      { code: 'REST',  name: 'Restauration collective',   capacity: 10, duration: '3 mois' },
+    ];
+    const allFormations = (created || []).flatMap((inco) =>
+      formationsBase.map((f) => ({ ...f, incorporation_id: inco.id }))
+    );
+    if (allFormations.length) await supabase.from('formations').insert(allFormations);
   }
 
-  /* ---------- Marqueur d'init ---------- */
-  localStorage.setItem(SEED_FLAG_KEY, '1');
-  return true;
+  // News
+  const { count: nCount } = await supabase.from('news').select('*', { count: 'exact', head: true });
+  if (!nCount) {
+    await supabase.from('news').insert([
+      { date: '11/05', title: 'Cérémonie remise de calot · CAPI 2026', excerpt: 'Vendredi 16 mai, place d\'armes Beauregard.', kind: 'navy', published: true },
+      { date: '10/05', title: 'Nouveau partenaire · Carrefour Logistique', excerpt: '4 contrats d\'apprentissage à pourvoir.', kind: 'green', published: true },
+      { date: '08/05', title: 'Marche commémorative · 80 ans', excerpt: 'Avec les écoles de La Rochelle.', kind: 'lightblue', published: true },
+    ]);
+  }
+
+  // Jobs
+  const { count: jCount } = await supabase.from('jobs').select('*', { count: 'exact', head: true });
+  if (!jCount) {
+    await supabase.from('jobs').insert([
+      { type: 'Alternance', title: 'Mécanicien VL · alternance', company: 'Carrosserie Lemoine', city: 'La Rochelle (17)', tags: ['Permis B','Mécanique','CAP'], description: "Tu sors de formation SMV, tu as ton permis B et l'envie d'apprendre un métier de terrain.", email: 'rh@lemoine.fr', published: true, posted: 'récente' },
+      { type: 'CDI', title: 'Préparateur de commandes', company: 'Carrefour Logistique', city: 'Aytré (17)', tags: ['Permis CACES','Équipe','2x8'], description: 'Préparation de commandes en équipe 2x8.', email: 'rh@carrefour-log.fr', published: true, posted: 'récente' },
+      { type: 'CDD', title: 'Commis de cuisine', company: 'Mess officiers Marine', city: 'Rochefort (17)', tags: ['Restauration','HACCP'], description: 'Commis dans un mess officiers.', email: 'rh@mess-marine.fr', published: true, posted: 'récente' },
+      { type: 'Apprentissage', title: 'Apprenti menuisier', company: 'Bois Pallice', city: 'La Pallice (17)', tags: ['CAP','Manuel','Permis B'], description: 'Atelier menuiserie, équipe de 5.', email: 'rh@bois-pallice.fr', published: true, posted: 'récente' },
+    ]);
+  }
+
+  // Events (planning d'exemple S21)
+  const { count: eCount } = await supabase.from('events').select('*', { count: 'exact', head: true });
+  if (!eCount) {
+    await supabase.from('events').insert([
+      { sec: 'S21', day: '2026-05-12', time: '06:30', title: 'Réveil & sport', sub: 'Stade · toute la section' },
+      { sec: 'S21', day: '2026-05-12', time: '09:00', title: 'Auto-école · Code', sub: 'Salle 2 · Sgt Bertin' },
+      { sec: 'S21', day: '2026-05-12', time: '10:00', title: 'Sport collectif', sub: 'Stade · S21' },
+      { sec: 'S21', day: '2026-05-12', time: '12:00', title: 'Repas', sub: 'Mess' },
+      { sec: 'S21', day: '2026-05-12', time: '14:00', title: 'Atelier insertion', sub: 'Salle 5 · cellule emploi' },
+      { sec: 'S21', day: '2026-05-12', time: '17:00', title: 'Sport individuel', sub: 'Salle de muscu' },
+    ]);
+  }
 }
 
-export function resetSeed() {
-  localStorage.removeItem(SEED_FLAG_KEY);
-  db.reset();
+/* -------- API principale -------- */
+export async function seedIfEmpty() {
+  // Si déjà seedé, on sort
+  if (await isSeeded()) return false;
+
+  console.log('[seed] Première initialisation Supabase...');
+
+  // Préserver la session courante si on en a une
+  const { data: { session: prev } } = await supabase.auth.getSession();
+  if (prev) await supabase.auth.signOut();
+
+  // 1. Créer le compte admin
+  const adminId = await trySignUpDemo(DEMO_USERS[0]);
+  // signUp auto-connecté en admin. On en profite pour patcher son profil.
+  if (adminId) await completeProfile(adminId, DEMO_USERS[0]);
+
+  // 2. Seed les données de référence (sections, incos, news, jobs)
+  //    On est connecté en admin → RLS OK
+  try {
+    await seedReferenceData();
+  } catch (e) {
+    console.warn('[seed] reference data:', e.message || e);
+  }
+
+  // 3. Marquer comme seedé
+  try { await markSeeded(); } catch (e) { console.warn('[seed] markSeeded:', e); }
+
+  // 4. Se déconnecter pour préparer la création des autres comptes
+  await supabase.auth.signOut();
+
+  // 5. Créer les autres comptes de démo
+  for (const u of DEMO_USERS.slice(1)) {
+    try {
+      const id = await trySignUpDemo(u);
+      if (id) await completeProfile(id, u);
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('[seed] user', u.username, ':', e.message || e);
+    }
+  }
+
+  console.log('[seed] Terminé');
+  return true;
 }
