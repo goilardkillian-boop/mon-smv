@@ -68,11 +68,24 @@ function blob({ kind = 'navy', label = '', svg = 'dots' } = {}) {
 
 function toast(msg, kind = '') {
   const el = document.createElement('div');
-  el.className = 'toast';
+  el.className = 'toast' + (kind ? ' toast--' + kind : '');
   el.textContent = msg;
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 2500);
+  setTimeout(() => el.remove(), 2800);
 }
+
+// Erreurs non gérées (promesses rejetées dans des handlers) → toast visible
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = e.reason?.message || e.reason || 'Erreur inconnue';
+  console.error('Unhandled rejection:', e.reason);
+  toast('⚠️ ' + msg, 'error');
+});
+window.addEventListener('error', (e) => {
+  if (e.error) {
+    console.error('Window error:', e.error);
+    toast('⚠️ ' + (e.error.message || e.message), 'error');
+  }
+});
 
 function bottomNav(role, active) {
   let items = [];
@@ -346,10 +359,13 @@ function screenConnexion() {
         </form>
 
         <div class="demo-creds">
-          <strong>Comptes de démonstration</strong><br/>
-          jeune <strong>l.morel</strong> · cadre <strong>t.bertin</strong> · famille <strong>fam.morel</strong><br/>
-          modérateur <strong>mod</strong> · admin <strong>admin</strong> · recrutement <strong>recrutement</strong> · fondateur <strong>fondateur</strong><br/>
-          Le mot de passe est le rôle (ex. <strong>jeune</strong>, <strong>admin</strong>, etc.).
+          <strong>Comptes de démo</strong><br/>
+          • admin <strong>admin</strong> / <strong>admin123</strong><br/>
+          • modérateur <strong>mod</strong> / <strong>mod1234</strong><br/>
+          • recrutement <strong>recrutement</strong> / <strong>recrutement</strong><br/>
+          • fondateur <strong>fondateur</strong> / <strong>fondateur</strong><br/>
+          • cadre <strong>t.bertin</strong> / <strong>cadre1</strong><br/>
+          • jeune <strong>l.morel</strong> / <strong>jeune1</strong>
         </div>
       </div>
     </section>`;
@@ -1207,9 +1223,18 @@ document.addEventListener('click', async (e) => {
 
   if (e.target.closest('[data-action="back"]')) { history.length > 1 ? history.back() : (location.hash = '#/'); return; }
   if (e.target.closest('[data-action="logout"]')) {
-    const u = currentUser();
-    if (u) logAction(`Déconnexion de ${u.firstName} ${u.lastName}`, 'session', u.id);
-    authLogout(); location.hash = '#/connexion'; render(); return;
+    try {
+      const u = currentUser();
+      if (u) await logAction(`Déconnexion de ${u.firstName} ${u.lastName}`, 'session', u.id);
+      await authLogout();
+      location.hash = '#/connexion';
+      render();
+      toast('Tu es déconnecté·e');
+    } catch (err) {
+      console.error('logout failed', err);
+      toast('Erreur déconnexion : ' + (err?.message || err));
+    }
+    return;
   }
   if (e.target.closest('[data-toast]')) { toast(e.target.closest('[data-toast]').getAttribute('data-toast')); return; }
 
@@ -1253,7 +1278,7 @@ document.addEventListener('click', async (e) => {
   }
   if (e.target.closest('[data-action="user-reset-password"]')) {
     const id = e.target.closest('[data-action="user-reset-password"]').getAttribute('data-id');
-    if (!confirm('Réinitialiser le mot de passe et forcer un changement au prochain login ?')) return;
+    if (!(await confirmModal('Réinitialiser le mot de passe et forcer un changement au prochain login ?'))) return;
     const newPwd = await resetPasswordByAdmin(id);
     const u = db.byId('users', id);
     logAction(`Mot de passe réinitialisé pour ${u.firstName} ${u.lastName} (@${u.username})`, 'users', u.id);
@@ -1270,7 +1295,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('[data-action="user-delete"]')) {
     const id = e.target.closest('[data-action="user-delete"]').getAttribute('data-id');
     const u = db.byId('users', id);
-    if (!confirm(`Supprimer définitivement le compte ${u.username} ? Cette action est tracée dans l'audit log.`)) return;
+    if (!(await confirmModal(`Supprimer définitivement le compte ${u.username} ? Cette action est tracée dans l'audit log.`))) return;
     await db.remove('users', id);
     toast('Compte supprimé');
     return;
@@ -1280,7 +1305,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('[data-action="cand-promote"]')) {
     const id = e.target.closest('[data-action="cand-promote"]').getAttribute('data-id');
     const c = db.byId('candidatures', id);
-    if (!confirm(`Pré-inscrire ${c.firstName} ${c.lastName} comme jeune volontaire ?`)) return;
+    if (!(await confirmModal(`Pré-inscrire ${c.firstName} ${c.lastName} comme jeune volontaire ?`))) return;
     const { user: u, initialPassword } = await createUser({ firstName: c.firstName, lastName: c.lastName, email: c.email, role: 'jeune' });
     await db.update('candidatures', id, { status: 'traitee', linkedUserId: u.id });
     showResetPasswordModal(u, initialPassword);
@@ -1300,18 +1325,27 @@ document.addEventListener('click', async (e) => {
   // Invitations
   if (e.target.closest('[data-action="inv-revoke"]')) {
     const id = e.target.closest('[data-action="inv-revoke"]').getAttribute('data-id');
-    if (!confirm('Révoquer cette invitation ?')) return;
+    if (!(await confirmModal('Révoquer cette invitation ?'))) return;
     await db.update('invitations', id, { status: 'expiree' });
     return;
   }
 
-  // Recrutement
+  // Recrutement · incorporations
   if (e.target.closest('[data-action="inco-add"]')) {
-    const label = prompt('Libellé de la nouvelle incorporation (ex: Mai 2027)');
-    if (!label) return;
-    const sl = slug(label) || ('inco-' + Date.now());
-    await db.insert('incorporations', { label, slug: sl, open: true, seats: 132, seatsTaken: 0 });
-    toast('Incorporation ajoutée');
+    const r = await inputModal({
+      title: 'Nouvelle incorporation',
+      fields: [
+        { name: 'label', label: 'Libellé (ex. Mai 2027)', placeholder: 'Mai 2027', required: true },
+        { name: 'seats', label: 'Places', type: 'number', value: 132 },
+      ],
+      submitLabel: 'Créer',
+    });
+    if (!r) return;
+    const sl = slug(r.label) || ('inco-' + Date.now());
+    try {
+      await db.insert('incorporations', { label: r.label, slug: sl, open: true, seats: r.seats || 132, seatsTaken: 0 });
+      toast('Incorporation ajoutée ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="inco-edit"]')) {
@@ -1321,39 +1355,71 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('[data-action="inco-toggle"]')) {
     const id = e.target.closest('[data-action="inco-toggle"]').getAttribute('data-id');
     const i = db.byId('incorporations', id);
-    await db.update('incorporations', id, { open: !i.open });
+    try {
+      await db.update('incorporations', id, { open: !i.open });
+      toast(i.open ? 'Inscriptions fermées' : 'Inscriptions ouvertes');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="inco-delete"]')) {
     const id = e.target.closest('[data-action="inco-delete"]').getAttribute('data-id');
-    if (!confirm('Supprimer cette incorporation et ses formations ?')) return;
-    for (const f of db.filter('formations', (g) => g.incorporationId === id)) {
-      await db.remove('formations', f.id);
-    }
-    await db.remove('incorporations', id);
+    if (!(await confirmModal('Supprimer cette incorporation et ses formations ?', { confirmLabel: 'Supprimer', danger: true }))) return;
+    try {
+      for (const f of db.filter('formations', (g) => g.incorporationId === id)) {
+        await db.remove('formations', f.id);
+      }
+      await db.remove('incorporations', id);
+      toast('Incorporation supprimée ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="formation-add"]')) {
     const incoId = e.target.closest('[data-action="formation-add"]').getAttribute('data-inco');
-    const code = prompt('Code de la formation (ex: AUTO)');
-    if (!code) return;
-    const name = prompt('Nom complet ?'); if (!name) return;
-    const duration = prompt('Durée ?', '3 mois'); if (!duration) return;
-    const capacity = parseInt(prompt('Capacité ?', '12'), 10) || 12;
-    await db.insert('formations', { incorporationId: incoId, code, name, duration, capacity });
+    const r = await inputModal({
+      title: 'Nouvelle formation',
+      fields: [
+        { name: 'code', label: 'Code (ex. AUTO, MECA)', required: true },
+        { name: 'name', label: 'Nom complet', required: true },
+        { name: 'duration', label: 'Durée', value: '3 mois' },
+        { name: 'capacity', label: 'Capacité', type: 'number', value: 12 },
+      ],
+      submitLabel: 'Créer',
+    });
+    if (!r) return;
+    try {
+      await db.insert('formations', { incorporationId: incoId, code: r.code, name: r.name, duration: r.duration, capacity: r.capacity || 12 });
+      toast('Formation créée ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="formation-edit"]')) {
     const id = e.target.closest('[data-action="formation-edit"]').getAttribute('data-id');
     const f = db.byId('formations', id);
-    const name = prompt('Nom de la formation', f.name); if (!name) return;
-    await db.update('formations', id, { name });
+    if (!f) return;
+    const r = await inputModal({
+      title: `Modifier formation`,
+      fields: [
+        { name: 'code', label: 'Code', value: f.code, required: true },
+        { name: 'name', label: 'Nom', value: f.name, required: true },
+        { name: 'duration', label: 'Durée', value: f.duration },
+        { name: 'capacity', label: 'Capacité', type: 'number', value: f.capacity },
+      ],
+      submitLabel: 'Enregistrer',
+    });
+    if (!r) return;
+    try {
+      await db.update('formations', id, r);
+      toast('Formation mise à jour ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="formation-delete"]')) {
     const id = e.target.closest('[data-action="formation-delete"]').getAttribute('data-id');
-    if (!confirm('Supprimer cette formation ?')) return;
-    await db.remove('formations', id);
+    if (!(await confirmModal('Supprimer cette formation ?', { confirmLabel: 'Supprimer', danger: true }))) return;
+    try {
+      await db.remove('formations', id);
+      toast('Formation supprimée ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
 
@@ -1365,13 +1431,13 @@ document.addEventListener('click', async (e) => {
   }
   if (e.target.closest('[data-action="backup-restore"]')) {
     const id = e.target.closest('[data-action="backup-restore"]').getAttribute('data-id');
-    if (!confirm('Restaurer cette sauvegarde ? Un instantané de l\'état actuel sera créé avant.')) return;
+    if (!(await confirmModal('Restaurer cette sauvegarde ? Un instantané de l\'état actuel sera créé avant.'))) return;
     if (restoreBackup(id)) toast('Sauvegarde restaurée');
     return;
   }
   if (e.target.closest('[data-action="backup-delete"]')) {
     const id = e.target.closest('[data-action="backup-delete"]').getAttribute('data-id');
-    if (!confirm('Supprimer cette sauvegarde ?')) return;
+    if (!(await confirmModal('Supprimer cette sauvegarde ?'))) return;
     deleteBackup(id);
     render();
     return;
@@ -1385,7 +1451,7 @@ document.addEventListener('click', async (e) => {
 
   // Reset logo (admin settings)
   if (e.target.closest('[data-action="logo-reset"]')) {
-    if (!confirm('Réinitialiser le logo par défaut ?')) return;
+    if (!(await confirmModal('Réinitialiser le logo par défaut ?'))) return;
     await db.setSettings({ logoUrl: '' });
     updateFavicon();
     toast('Logo réinitialisé');
@@ -1394,31 +1460,42 @@ document.addEventListener('click', async (e) => {
 
   /* ------- SECTIONS (admin) ------- */
   if (e.target.closest('[data-action="section-add"]')) {
-    const code = prompt('Code de la section (ex: S31, S33)?');
-    if (!code) return;
-    const name = prompt('Nom complet (ex: Section S31)?', 'Section ' + code.toUpperCase());
-    if (!name) return;
-    const compagnie = parseInt(prompt("Numéro de compagnie (1, 2, 3...) ?", '1'), 10);
-    if (!compagnie || isNaN(compagnie)) return;
-    // Vérifier doublon de code
-    if (db.find('sections', (s) => s.code === code.toUpperCase())) {
-      alert('Une section avec ce code existe déjà.');
-      return;
-    }
-    await db.insert('sections', { code: code.toUpperCase(), name, compagnie, description: compagnie + 'ᵉ compagnie' });
-    toast('Section créée');
+    const r = await inputModal({
+      title: 'Nouvelle section',
+      fields: [
+        { name: 'code', label: 'Code (ex. S31)', placeholder: 'S31', required: true },
+        { name: 'name', label: 'Nom complet', placeholder: 'Section S31' },
+        { name: 'compagnie', label: 'Compagnie (1, 2, 3...)', type: 'number', value: 1, required: true },
+      ],
+      submitLabel: 'Créer',
+    });
+    if (!r) return;
+    const code = (r.code || '').trim().toUpperCase();
+    if (!code) { toast('Code requis'); return; }
+    if (db.find('sections', (s) => s.code === code)) { toast('Cette section existe déjà'); return; }
+    try {
+      await db.insert('sections', { code, name: r.name || ('Section ' + code), compagnie: r.compagnie, description: r.compagnie + 'ᵉ compagnie' });
+      toast(`Section ${code} créée ✓`);
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="section-edit"]')) {
     const id = e.target.closest('[data-action="section-edit"]').getAttribute('data-id');
     const s = db.byId('sections', id);
     if (!s) return;
-    const name = prompt('Nouveau nom ?', s.name);
-    if (name == null) return;
-    const compagnie = parseInt(prompt('Compagnie ?', s.compagnie), 10);
-    if (!compagnie || isNaN(compagnie)) return;
-    await db.update('sections', id, { name, compagnie, description: compagnie + 'ᵉ compagnie' });
-    toast('Section mise à jour');
+    const r = await inputModal({
+      title: `Modifier ${s.code}`,
+      fields: [
+        { name: 'name', label: 'Nom', value: s.name, required: true },
+        { name: 'compagnie', label: 'Compagnie', type: 'number', value: s.compagnie, required: true },
+      ],
+      submitLabel: 'Enregistrer',
+    });
+    if (!r) return;
+    try {
+      await db.update('sections', id, { name: r.name, compagnie: r.compagnie, description: r.compagnie + 'ᵉ compagnie' });
+      toast('Section mise à jour ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="section-delete"]')) {
@@ -1426,12 +1503,15 @@ document.addEventListener('click', async (e) => {
     const s = db.byId('sections', id);
     if (!s) return;
     const members = db.filter('users', (u) => u.section === s.code);
-    if (members.length > 0) {
-      if (!confirm(`Cette section a ${members.length} membre(s). En la supprimant, ils seront désaffectés. Continuer ?`)) return;
-      for (const m of members) await db.update("users", m.id, { section: null });
-    } else if (!confirm(`Supprimer la section ${s.code} ?`)) return;
-    await db.remove('sections', id);
-    toast('Section supprimée');
+    const msg = members.length > 0
+      ? `Cette section a ${members.length} membre(s). En la supprimant, ils seront désaffectés. Continuer ?`
+      : `Supprimer la section ${s.code} ?`;
+    if (!(await confirmModal(msg, { confirmLabel: 'Supprimer', danger: true }))) return;
+    try {
+      for (const m of members) await db.update('users', m.id, { section: null });
+      await db.remove('sections', id);
+      toast('Section supprimée ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
 
@@ -1535,6 +1615,14 @@ document.addEventListener('submit', async (e) => {
   const fd = new FormData(form);
   const data = Object.fromEntries(fd.entries());
 
+  try { await handleSubmit(kind, data, form); }
+  catch (err) {
+    console.error('Form submit error', kind, err);
+    toast(`Erreur : ${err?.message || err}`);
+  }
+});
+
+async function handleSubmit(kind, data, form) {
   switch (kind) {
     case 'candidature': {
       await db.insert('candidatures', {
@@ -1712,7 +1800,92 @@ document.addEventListener('submit', async (e) => {
       break;
     }
   }
-});
+}
+
+/* ============================================================
+   Modale "input form" générique (remplace prompt() chains)
+   Usage:
+     const r = await inputModal({
+       title: 'Nouvelle section',
+       fields: [
+         { name: 'code', label: 'Code (ex. S31)', value: '', required: true },
+         { name: 'name', label: 'Nom complet', value: '' },
+         { name: 'compagnie', label: 'Compagnie', type: 'number', value: 1 },
+       ],
+       submitLabel: 'Créer'
+     });
+     // r === null si annulé, sinon r === { code, name, compagnie }
+   ============================================================ */
+function inputModal({ title, fields = [], submitLabel = 'Valider', cancelLabel = 'Annuler' }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal';
+    wrap.innerHTML = `
+      <div class="modal__panel">
+        <div class="modal__head">
+          <div class="modal__title">${escapeHtml(title)}</div>
+          <button class="modal__close" type="button" aria-label="Fermer">${ICONS.close}</button>
+        </div>
+        <form class="modal__body">
+          ${fields.map((f) => `
+            <div class="admin-field">
+              <label class="admin-field__label">${escapeHtml(f.label)}${f.required ? ' *' : ''}</label>
+              ${f.type === 'select'
+                ? `<select class="admin-field__select" name="${f.name}" ${f.required ? 'required' : ''}>
+                     ${(f.options || []).map((o) => `<option value="${escapeHtml(o.value)}" ${o.value === f.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+                   </select>`
+                : f.type === 'textarea'
+                ? `<textarea class="admin-field__textarea" name="${f.name}" ${f.required ? 'required' : ''}>${escapeHtml(f.value ?? '')}</textarea>`
+                : `<input class="admin-field__input" name="${f.name}" type="${f.type || 'text'}" value="${escapeHtml(f.value ?? '')}" ${f.required ? 'required' : ''} ${f.placeholder ? `placeholder="${escapeHtml(f.placeholder)}"` : ''} />`}
+              ${f.hint ? `<div class="admin-field__hint">${escapeHtml(f.hint)}</div>` : ''}
+            </div>`).join('')}
+          <div class="modal__foot" style="margin-top: 8px;">
+            <button type="button" class="btn btn--ghost-ink btn--sm" data-modal-cancel>${escapeHtml(cancelLabel)}</button>
+            <button type="submit" class="btn btn--navy btn--sm">${escapeHtml(submitLabel)}</button>
+          </div>
+        </form>
+      </div>`;
+    document.body.appendChild(wrap);
+    setTimeout(() => wrap.querySelector('input, select, textarea')?.focus(), 50);
+
+    function close(result) { wrap.remove(); resolve(result); }
+    wrap.addEventListener('click', (ev) => {
+      if (ev.target === wrap) close(null);
+      if (ev.target.closest('.modal__close') || ev.target.closest('[data-modal-cancel]')) close(null);
+    });
+    wrap.querySelector('form').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const result = {};
+      for (const f of fields) {
+        const el = wrap.querySelector(`[name="${f.name}"]`);
+        result[f.name] = f.type === 'number' ? Number(el.value) : el.value;
+      }
+      close(result);
+    });
+  });
+}
+
+async function confirmModal(message, { confirmLabel = 'Confirmer', cancelLabel = 'Annuler', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal';
+    wrap.innerHTML = `
+      <div class="modal__panel" style="max-width: 420px;">
+        <div class="modal__body" style="padding-top: 22px;">
+          <div style="font-size: 15px; line-height: 1.5;">${escapeHtml(message)}</div>
+          <div class="modal__foot" style="margin-top: 16px; padding: 0; border-top: 0;">
+            <button type="button" class="btn btn--ghost-ink btn--sm" data-no>${escapeHtml(cancelLabel)}</button>
+            <button type="button" class="btn ${danger ? 'btn--red' : 'btn--navy'} btn--sm" data-yes>${escapeHtml(confirmLabel)}</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    wrap.addEventListener('click', (ev) => {
+      if (ev.target === wrap || ev.target.closest('[data-no]')) { wrap.remove(); resolve(false); }
+      if (ev.target.closest('[data-yes]')) { wrap.remove(); resolve(true); }
+    });
+  });
+}
 
 /* ============================================================
    Modale réinitialisation / nouveau compte

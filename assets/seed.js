@@ -30,17 +30,18 @@ function nextIncorporations(count = 6) {
   return out;
 }
 
+// Mots de passe ≥ 6 caractères (contrainte Supabase Auth)
 const DEMO_USERS = [
-  { username: 'admin',        password: 'admin',        firstName: 'Sophie',  lastName: 'Durand',   role: 'admin',       email: 'admin@smv.gouv.fr' },
+  { username: 'admin',        password: 'admin123',     firstName: 'Sophie',  lastName: 'Durand',   role: 'admin',       email: 'admin@smv.gouv.fr' },
   { username: 'fondateur',    password: 'fondateur',    firstName: 'Marc',    lastName: 'Lefevre',  role: 'fondateur',   email: 'fondateur@smv.gouv.fr', founder: true },
-  { username: 'mod',          password: 'mod',          firstName: 'Julien',  lastName: 'Roche',    role: 'moderateur',  email: 'moderation@smv.gouv.fr' },
+  { username: 'mod',          password: 'mod1234',      firstName: 'Julien',  lastName: 'Roche',    role: 'moderateur',  email: 'moderation@smv.gouv.fr' },
   { username: 'recrutement',  password: 'recrutement',  firstName: 'Claire',  lastName: 'Vidal',    role: 'recrutement', email: 'recrutement@smv.gouv.fr' },
-  { username: 't.bertin',     password: 'cadre',        firstName: 'Thomas',  lastName: 'Bertin',   role: 'cadre', section: 'S21', email: 't.bertin@smv.gouv.fr' },
-  { username: 'l.costa',      password: 'cadre',        firstName: 'Léonie',  lastName: 'Costa',    role: 'cadre', section: 'S22', email: 'l.costa@smv.gouv.fr' },
-  { username: 'l.morel',      password: 'jeune',        firstName: 'Léa',     lastName: 'Morel',    role: 'jeune', section: 'S21', email: 'l.morel@smv.gouv.fr' },
-  { username: 'k.boucher',    password: 'jeune',        firstName: 'Karim',   lastName: 'Boucher',  role: 'jeune', section: 'S21', email: 'k.boucher@smv.gouv.fr' },
-  { username: 'i.tessier',    password: 'jeune',        firstName: 'Inès',    lastName: 'Tessier',  role: 'jeune', section: 'S21', email: 'i.tessier@smv.gouv.fr' },
-  { username: 'j.boutet',     password: 'jeune',        firstName: 'Julien',  lastName: 'Boutet',   role: 'jeune', section: 'S22', email: 'j.boutet@smv.gouv.fr' },
+  { username: 't.bertin',     password: 'cadre1',       firstName: 'Thomas',  lastName: 'Bertin',   role: 'cadre', section: 'S21', email: 't.bertin@smv.gouv.fr' },
+  { username: 'l.costa',      password: 'cadre1',       firstName: 'Léonie',  lastName: 'Costa',    role: 'cadre', section: 'S22', email: 'l.costa@smv.gouv.fr' },
+  { username: 'l.morel',      password: 'jeune1',       firstName: 'Léa',     lastName: 'Morel',    role: 'jeune', section: 'S21', email: 'l.morel@smv.gouv.fr' },
+  { username: 'k.boucher',    password: 'jeune1',       firstName: 'Karim',   lastName: 'Boucher',  role: 'jeune', section: 'S21', email: 'k.boucher@smv.gouv.fr' },
+  { username: 'i.tessier',    password: 'jeune1',       firstName: 'Inès',    lastName: 'Tessier',  role: 'jeune', section: 'S21', email: 'i.tessier@smv.gouv.fr' },
+  { username: 'j.boutet',     password: 'jeune1',       firstName: 'Julien',  lastName: 'Boutet',   role: 'jeune', section: 'S22', email: 'j.boutet@smv.gouv.fr' },
 ];
 
 async function trySignUpDemo(u) {
