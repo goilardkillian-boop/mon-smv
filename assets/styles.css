@@ -565,16 +565,16 @@ a { color: inherit; text-decoration: none; }
   box-shadow: 0 -4px 18px rgba(11,22,56,.04);
   animation: nav-slide-up .35s cubic-bezier(.22,.61,.36,1);
 }
-/* Quand le bottom-nav existe, on pousse le contenu pour ne pas être caché derrière */
-.screen:has(.bottom-nav) .screen__scroll { padding-bottom: 100px; }
-.screen:has(.bottom-nav) > *:last-child:not(.bottom-nav) { margin-bottom: 88px; }
-.screen:has(.bottom-nav) .greeting + .today,
-.screen:has(.bottom-nav) .greeting + * { padding-bottom: 0; }
-/* Padding défensif pour les écrans sans .screen__scroll wrapper */
-.screen { padding-bottom: 0; }
+/* Espace réservé en bas pour éviter que la bottom-nav cache le contenu.
+   La bottom-nav est sibling de .screen (déplacée par render() dans app.js),
+   donc on applique le padding sur .app si la nav existe. */
 @media (max-width: 879px) {
-  .screen:has(.bottom-nav) { padding-bottom: 88px; }
+  .app:has(.bottom-nav) .screen,
+  .app:has(.bottom-nav) .screen__scroll { padding-bottom: 96px; }
+  /* Le composer (zone d'envoi de message) doit rester collé au-dessus de la nav */
+  .app:has(.bottom-nav) .composer { bottom: 76px; }
 }
+.screen__scroll { padding-bottom: 24px; }
 
 @keyframes nav-slide-up {
   from { transform: translateY(20px); opacity: 0; }
