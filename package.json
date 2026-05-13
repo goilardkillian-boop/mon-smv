@@ -9,5 +9,8 @@
     "serve": "npx --yes serve@latest .",
     "smoke": "node scripts/smoke.mjs"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@supabase/supabase-js": "^2.105.4"
+  }
 }
