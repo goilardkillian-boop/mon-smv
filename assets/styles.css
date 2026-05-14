@@ -373,17 +373,24 @@ a { color: inherit; text-decoration: none; }
   gap: 8px;
   border: 0;
   border-radius: 999px;
-  padding: 16px 22px;
+  padding: 14px 22px;
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 15px;
+  font-size: clamp(13px, 1.6vw, 15px);
   letter-spacing: .06em;
   text-transform: uppercase;
-  min-height: 52px;
+  min-height: 48px;
+  max-height: 56px;
+  line-height: 1.1;
   position: relative;
   overflow: hidden;
   transition: transform .15s cubic-bezier(.22,.61,.36,1), background .2s ease, box-shadow .2s ease;
   will-change: transform;
+}
+/* Sur desktop, on borne les CTAs btn--block pour qu'ils ne deviennent pas géants */
+@media (min-width: 1024px) {
+  .btn--block { max-width: 360px; }
+  .auth-wrap .btn--block { max-width: 100%; }
 }
 .btn::after {
   content: '';
@@ -402,6 +409,8 @@ a { color: inherit; text-decoration: none; }
 .btn--navy:hover:not(:disabled) { box-shadow: 0 8px 24px rgba(11,22,56,.25); }
 
 .btn--block { width: 100%; }
+/* Limite la taille des SVG dans les boutons (sinon l'icône fait 300x150 par défaut !) */
+.btn > svg { width: 18px; height: 18px; flex-shrink: 0; }
 .btn--fluo { background: var(--green-fluo); color: var(--navy-900); }
 .btn--fluo:hover { background: #5af13c; }
 .btn--navy { background: var(--navy-600); color: var(--white); }
@@ -1322,7 +1331,85 @@ a { color: inherit; text-decoration: none; }
 .admin-header__logout:hover { background: var(--white); color: var(--red); }
 .admin-header__logout svg { width: 16px; height: 16px; }
 
-/* Sous-nav scrollable horizontalement (3 cols → s'étend sur la ligne suivante) */
+/* Burger menu sur mobile : transforme la nav admin en offcanvas */
+.admin-header__burger {
+  width: 40px; height: 40px;
+  border: 0; border-radius: 10px;
+  background: var(--bg-soft); color: var(--ink-900);
+  display: grid; place-items: center;
+  margin-right: 4px;
+}
+.admin-header__burger svg { width: 20px; height: 20px; }
+
+/* Offcanvas drawer (mobile uniquement) */
+.admin-drawer {
+  position: fixed; inset: 0;
+  background: rgba(11,22,56,.5);
+  z-index: 80;
+  display: none;
+  animation: fadein .15s ease;
+}
+.admin-drawer.is-open { display: block; }
+.admin-drawer__panel {
+  position: absolute; top: 0; left: 0; bottom: 0;
+  width: min(82vw, 320px);
+  background: var(--white);
+  padding: 18px 14px;
+  overflow-y: auto;
+  animation: slidein-left .22s cubic-bezier(.22,.61,.36,1);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.admin-drawer__panel::before {
+  content: 'Mon SMV · panel';
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 4px 12px 14px;
+  color: var(--navy-900);
+  border-bottom: 1px solid var(--bg-stroke);
+  margin-bottom: 10px;
+}
+.admin-drawer__panel a {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+}
+.admin-drawer__panel a.is-active {
+  background: var(--navy-900);
+  color: var(--white);
+}
+.admin-drawer__panel a svg { width: 18px; height: 18px; }
+.admin-drawer__close {
+  margin-top: auto;
+  background: var(--bg-soft); color: var(--red);
+  border: 0; padding: 12px 14px;
+  border-radius: 10px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  display: flex; align-items: center; gap: 10px;
+}
+@keyframes slidein-left {
+  from { transform: translateX(-20px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+@media (min-width: 1024px) {
+  .admin-header__burger { display: none; }
+  .admin-drawer { display: none !important; }
+}
+
+/* Sous-nav scrollable horizontalement (uniquement sur tablette) */
 .admin-header__nav {
   grid-column: 1 / -1;
   display: flex;
@@ -1332,6 +1419,9 @@ a { color: inherit; text-decoration: none; }
   padding: 8px 0 0;
   margin: 4px -4px -4px;
   scroll-snap-type: x mandatory;
+}
+@media (max-width: 767px) {
+  .admin-header__nav { display: none; }
 }
 .admin-header__nav::-webkit-scrollbar { display: none; }
 .admin-header__nav a {
@@ -1403,6 +1493,19 @@ a { color: inherit; text-decoration: none; }
 
   /* Sidebar admin = bottom-nav-admin (qu'on ajoute via JS) */
   body[data-mode="admin"] .bottom-nav { display: flex !important; }
+  /* Force visibilité de l'item actif sur desktop (sinon il "disparaît") */
+  body[data-mode="admin"] .bottom-nav__item--active,
+  .bottom-nav__item--active {
+    background: var(--navy-900) !important;
+    color: var(--white) !important;
+    border-radius: 10px !important;
+  }
+  body[data-mode="admin"] .bottom-nav__item--active > svg,
+  .bottom-nav__item--active > svg,
+  body[data-mode="admin"] .bottom-nav__item--active > span,
+  .bottom-nav__item--active > span { color: var(--white) !important; }
+  /* Le pseudo-élément dot (mobile) est caché sur desktop */
+  body[data-mode="admin"] .bottom-nav__item--active::before { display: none; }
 }
 .admin-h1 {
   font-family: var(--font-display);
@@ -1671,7 +1774,14 @@ a { color: inherit; text-decoration: none; }
 .auth-wrap {
   flex: 1;
   display: flex; flex-direction: column;
-  padding: 32px 28px 28px;
+  padding: clamp(20px, 5vw, 40px) clamp(20px, 5vw, 32px) 28px;
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+}
+@media (min-width: 1024px) {
+  .auth-wrap { padding: 48px 40px; max-width: 480px; }
+  .auth-wrap form .btn { min-height: 48px; }
 }
 .auth-wrap__brand {
   display: flex; gap: 12px; align-items: center; margin-bottom: 24px;
