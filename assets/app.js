@@ -127,17 +127,8 @@ function bottomNav(role, active) {
 /* Sidebar admin (utilisée sur desktop pour les rôles admin/mod/recru/fondateur).
    Sur mobile, l'admin-header__nav (scrollable horizontalement) fait le job. */
 function adminSidebar(active, user) {
-  const items = [
-    ['admin',                  'Tableau',     ICONS.home,        canAccessAdmin(user)],
-    ['admin/utilisateurs',     'Utilisateurs',ICONS.users,       canAccessAdmin(user)],
-    ['admin/candidatures',     'Candidatures',ICONS.send,        canAccessAdmin(user) || canAccessRecrutement(user)],
-    ['admin/sections',         'Sections',    ICONS.shieldFull,  canAccessAdmin(user)],
-    ['admin/familles',         'Familles',    ICONS.users,       canAccessAdmin(user)],
-    ['recrutement',            'Recrutement', ICONS.graduation,  canAccessRecrutement(user)],
-    ['admin/parametres',       'Paramètres',  ICONS.cog,         canAccessAdmin(user)],
-    ['admin/audit',            'Audit',       ICONS.history,     canAccessAdmin(user)],
-    ['fondateur/sauvegardes',  'Sauvegardes', ICONS.database,    canAccessBackups(user)],
-  ].filter((x) => x[3]);
+  // Source unique de vérité : adminNavItems exporté depuis screens-admin
+  const items = Admin.adminNavItems(user);
   return `
     <nav class="bottom-nav">
       ${items.map(([slug, label, icon]) => `
@@ -210,6 +201,11 @@ function screenDecouvrir() {
               <div><div class="parcours__name">${t}</div><div class="parcours__desc">${d}</div></div>
             </div>`).join('')}
         </div>
+
+        ${nextIncorporationCard()}
+
+        ${latestArticlesCard(3)}
+
         <div class="px-4" style="padding-bottom: 20px">
           <button class="btn btn--navy btn--block" data-link="#/candidature">${s.candidatureButtonLabel || 'Envoyer ma demande'}</button>
           <button class="btn btn--ghost-ink btn--block mt-4" data-link="#/connexion">J'ai déjà un compte</button>
@@ -217,6 +213,84 @@ function screenDecouvrir() {
       </div>
       ${bottomNav('visitor', 'decouvrir')}
     </section>`;
+}
+
+/* Composants partagés (utilisés sur découvrir + accueil) */
+function nextIncorporationCard() {
+  const incos = db.filter('incorporations', (i) => i.open).sort((a, b) => `${a.year}-${String(a.month).padStart(2,'0')}`.localeCompare(`${b.year}-${String(b.month).padStart(2,'0')}`));
+  const next = incos[0];
+  if (!next) return '';
+  const formations = db.filter('formations', (f) => f.incorporationId === next.id);
+  return `
+    <div class="section-title section-title--green">Prochaine incorporation</div>
+    <div class="px-4" style="padding-bottom: 8px">
+      <div class="card" style="padding: 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+          <div>
+            <div style="font-family: var(--font-display); font-weight: 700; font-size: 22px; text-transform: uppercase; letter-spacing: .02em">${escapeHtml(next.label)}</div>
+            <div class="muted" style="font-size: 12px; margin-top: 2px">${(next.seats || 0) - (next.seatsTaken || 0)} places restantes sur ${next.seats || 0}</div>
+          </div>
+          <span class="tag tag--green">ouverte</span>
+        </div>
+        ${formations.length > 0 ? `
+          <div style="margin-top: 14px; display: flex; flex-direction: column; gap: 8px;">
+            ${formations.map((f) => `
+              <div style="display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; background: var(--bg-cream); border-radius: 10px;">
+                <div>
+                  <div style="font-family: var(--font-display); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em">${escapeHtml(f.name)}</div>
+                  <div style="font-size: 11px; color: var(--ink-500); margin-top: 2px">Code <code>${escapeHtml(f.code)}</code> · ${escapeHtml(f.duration || '')} · ${f.capacity} places</div>
+                </div>
+              </div>`).join('')}
+          </div>` : '<p class="muted" style="margin: 10px 0 0; font-size: 12px">Formations à venir.</p>'}
+      </div>
+    </div>`;
+}
+
+function latestArticlesCard(limit = 3) {
+  const articles = db.filter('news', (n) => n.published !== false).slice(0, limit);
+  if (articles.length === 0) return '';
+  return `
+    <div class="section-title">Dernières actualités</div>
+    <div style="padding: 0 16px 8px;">
+      ${articles.map((n) => `
+        <div class="card" style="margin-bottom: 10px; display:grid; grid-template-columns: 78px 1fr; gap: 12px; padding: 10px">
+          <div style="width:78px; aspect-ratio:1; border-radius:12px; overflow:hidden">${blob({ kind: n.kind || 'navy', svg: 'dots' })}</div>
+          <div style="align-self:center">
+            <div style="font-family: var(--font-mono); font-size: 10px; color: var(--green); letter-spacing: .08em; text-transform: uppercase">${escapeHtml(n.date || '')}</div>
+            <div style="font-family: var(--font-display); font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: .03em; margin-top: 2px">${escapeHtml(n.title)}</div>
+            <div style="font-size: 12px; color: var(--ink-500); margin-top: 2px">${escapeHtml(n.excerpt || '')}</div>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function instagramEmbedCard() {
+  const s = db.getSettings();
+  const embed = (s.instagramEmbed || '').trim();
+  const handle = (s.instagramHandle || '').trim();
+  if (!embed && !handle) return '';
+  if (embed && /<iframe/i.test(embed)) {
+    return `<div class="section-title">Instagram du régiment</div>
+      <div class="px-4" style="padding-bottom: 12px;">
+        <div class="card" style="padding: 0; overflow: hidden;">${embed}</div>
+      </div>`;
+  }
+  if (handle) {
+    const url = `https://instagram.com/${handle.replace(/^@/, '')}`;
+    return `<div class="section-title">Instagram du régiment</div>
+      <div class="px-4" style="padding-bottom: 12px;">
+        <a class="card" href="${url}" target="_blank" rel="noopener" style="display: flex; align-items: center; gap: 12px; padding: 14px; text-decoration: none;">
+          <div style="width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(45deg, #feda75, #fa7e1e, #d62976, #962fbf, #4f5bd5); display: grid; place-items: center;">
+            <svg viewBox="0 0 24 24" stroke="white" fill="none" stroke-width="2" width="22" height="22"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1.2" fill="white"/></svg>
+          </div>
+          <div>
+            <div style="font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; font-size: 13px;">Suis-nous sur Instagram</div>
+            <div style="font-size: 12px; color: var(--ink-500); margin-top: 2px;">@${escapeHtml(handle.replace(/^@/, ''))}</div>
+          </div>
+        </a>
+      </div>`;
+  }
+  return '';
 }
 
 function screenGalerie() {
@@ -442,18 +516,11 @@ function screenAccueil() {
         <button class="tile" data-link="#/ressources"><div class="tile__icon">${ICONS.folder}</div><div><div class="tile__name">Ressources</div><div class="tile__count">Module 3</div></div></button>
       </div>
 
-      <div class="section-title">Actualités du régiment</div>
-      <div style="padding: 0 16px 24px">
-        ${db.filter('news', (n) => n.published !== false).slice(0, 3).map((n) => `
-          <div class="card" style="margin-bottom: 10px; display:grid; grid-template-columns: 78px 1fr; gap: 12px; padding: 10px">
-            <div style="width:78px; aspect-ratio:1; border-radius:12px; overflow:hidden">${blob({ kind: n.kind, svg: 'dots' })}</div>
-            <div style="align-self:center">
-              <div style="font-family: var(--font-mono); font-size: 10px; color: var(--green); letter-spacing: .08em; text-transform: uppercase">${n.date}</div>
-              <div style="font-family: var(--font-display); font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: .03em; margin-top: 2px">${escapeHtml(n.title)}</div>
-              <div style="font-size: 12px; color: var(--ink-500); margin-top: 2px">${escapeHtml(n.excerpt)}</div>
-            </div>
-          </div>`).join('')}
-      </div>
+      ${latestArticlesCard(3)}
+
+      ${instagramEmbedCard()}
+
+      <div style="padding: 0 16px 24px"></div>
       ${bottomNav('jeune', 'accueil')}
     </section>`;
 }
@@ -1134,6 +1201,11 @@ function resolve() {
     if (route === 'admin/familles' && canAccessAdmin(user)) return Admin.adminFamilles(user);
     if (route === 'admin/parametres' && canAccessAdmin(user)) return Admin.adminSettings(user);
     if (route === 'admin/audit' && canAccessAdmin(user)) return Admin.adminAudit(user, ui.auditFilters || {});
+    if (route === 'admin/articles' && canAccessAdmin(user)) return Admin.adminArticles(user);
+    if (route.startsWith('admin/candidatures/') && (canAccessAdmin(user) || canAccessRecrutement(user))) {
+      const cid = route.split('/')[2];
+      return Admin.recrutementCandidature(user, cid);
+    }
     if (route === 'recrutement' && canAccessRecrutement(user)) return Admin.recrutementDashboard(user);
     if (route.startsWith('recrutement/incorporations/') && canAccessRecrutement(user)) return Admin.recrutementInco(user, route.split('/')[2]);
     if (route === 'fondateur/sauvegardes' && canAccessBackups(user)) return Admin.fondateurBackups(user);
@@ -1196,10 +1268,10 @@ function render() {
 }
 
 function computeAdminActive(route) {
-  // Mappe une route admin/recru/fondateur à l'item de sidebar correspondant.
   if (route === 'admin' || route === '') return 'admin';
   if (route.startsWith('admin/utilisateurs')) return 'admin/utilisateurs';
   if (route.startsWith('admin/candidatures')) return 'admin/candidatures';
+  if (route.startsWith('admin/articles')) return 'admin/articles';
   if (route.startsWith('admin/sections')) return 'admin/sections';
   if (route.startsWith('admin/familles')) return 'admin/familles';
   if (route.startsWith('admin/parametres')) return 'admin/parametres';
@@ -1222,6 +1294,21 @@ document.addEventListener('click', async (e) => {
   if (link) { e.preventDefault(); location.hash = link.getAttribute('data-link'); return; }
 
   if (e.target.closest('[data-action="back"]')) { history.length > 1 ? history.back() : (location.hash = '#/'); return; }
+
+  // Burger menu admin (mobile)
+  if (e.target.closest('[data-action="admin-burger"]')) {
+    document.querySelector('[data-admin-drawer]')?.classList.add('is-open');
+    return;
+  }
+  if (e.target.closest('[data-action="admin-drawer-close"]')) {
+    document.querySelector('[data-admin-drawer]')?.classList.remove('is-open');
+    // ne pas return — laisse le lien (href) s'exécuter
+  }
+  // Click sur le fond de l'offcanvas pour fermer
+  if (e.target.matches('[data-admin-drawer]')) {
+    e.target.classList.remove('is-open');
+    return;
+  }
   if (e.target.closest('[data-action="logout"]')) {
     try {
       const u = currentUser();
@@ -1298,6 +1385,77 @@ document.addEventListener('click', async (e) => {
     if (!(await confirmModal(`Supprimer définitivement le compte ${u.username} ? Cette action est tracée dans l'audit log.`))) return;
     await db.remove('users', id);
     toast('Compte supprimé');
+    return;
+  }
+
+  /* ------- ARTICLES (news CRUD) ------- */
+  if (e.target.closest('[data-action="article-add"]')) {
+    const r = await inputModal({
+      title: 'Nouvel article',
+      fields: [
+        { name: 'title', label: 'Titre', required: true },
+        { name: 'excerpt', label: 'Extrait (résumé court)', type: 'textarea' },
+        { name: 'date', label: 'Date affichée (ex. 12/05)', value: new Date().toLocaleDateString('fr-FR', { day:'2-digit', month:'2-digit' }) },
+        { name: 'kind', label: 'Couleur visuel', type: 'select', value: 'navy', options: [
+          { value: 'navy', label: 'Marine' }, { value: 'green', label: 'Vert' }, { value: 'lightblue', label: 'Bleu clair' },
+        ]},
+      ],
+      submitLabel: 'Publier',
+    });
+    if (!r) return;
+    try {
+      await db.insert('news', { ...r, published: true });
+      toast('Article publié ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="article-edit"]')) {
+    const id = e.target.closest('[data-action="article-edit"]').getAttribute('data-id');
+    const n = db.byId('news', id);
+    if (!n) return;
+    const r = await inputModal({
+      title: 'Modifier l\'article',
+      fields: [
+        { name: 'title', label: 'Titre', value: n.title, required: true },
+        { name: 'excerpt', label: 'Extrait', type: 'textarea', value: n.excerpt || '' },
+        { name: 'date', label: 'Date affichée', value: n.date || '' },
+      ],
+      submitLabel: 'Enregistrer',
+    });
+    if (!r) return;
+    try { await db.update('news', id, r); toast('Article mis à jour ✓'); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="article-toggle"]')) {
+    const id = e.target.closest('[data-action="article-toggle"]').getAttribute('data-id');
+    const n = db.byId('news', id);
+    try { await db.update('news', id, { published: !n.published }); toast(n.published ? 'Dépublié' : 'Publié ✓'); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="article-delete"]')) {
+    const id = e.target.closest('[data-action="article-delete"]').getAttribute('data-id');
+    if (!(await confirmModal('Supprimer cet article ?', { confirmLabel: 'Supprimer', danger: true }))) return;
+    try { await db.remove('news', id); toast('Article supprimé ✓'); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+
+  /* ------- CANDIDATURE workflow (statuts) ------- */
+  if (e.target.closest('[data-action="cand-status"]')) {
+    const btn = e.target.closest('[data-action="cand-status"]');
+    const id = btn.getAttribute('data-id');
+    const status = btn.getAttribute('data-status');
+    try { await db.update('candidatures', id, { status }); toast(`Statut → ${status}`); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="cand-save-notes"]')) {
+    const id = e.target.closest('[data-action="cand-save-notes"]').getAttribute('data-id');
+    const ta = document.querySelector(`[data-cand-notes][data-id="${id}"]`);
+    try { await db.update('candidatures', id, { notes: ta?.value || '' }); toast('Notes enregistrées ✓'); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
 
@@ -1579,7 +1737,15 @@ document.addEventListener('input', (e) => {
     if (newInput) { newInput.focus(); newInput.setSelectionRange(a.value.length, a.value.length); }
   }
 });
-document.addEventListener('change', (e) => {
+document.addEventListener('change', async (e) => {
+  // Affectation incorporation d'une candidature
+  const ci = e.target.closest('[data-action="cand-incorporation"]');
+  if (ci) {
+    const id = ci.getAttribute('data-id');
+    try { await db.update('candidatures', id, { incorporation: ci.value || null }); toast('Incorporation mise à jour'); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
   const cl = e.target.closest('[data-audit-coll]');
   if (cl) { ui.auditFilters = { ...(ui.auditFilters || {}), coll: cl.value }; render(); return; }
   const us = e.target.closest('[data-audit-user]');
@@ -1770,9 +1936,11 @@ async function handleSubmit(kind, data, form) {
         candidatureButtonLabel: data.candidatureButtonLabel,
         candidatureMessage: data.candidatureMessage,
         rgpdMention: data.rgpdMention,
+        instagramHandle: data.instagramHandle || '',
+        instagramEmbed: data.instagramEmbed || '',
       };
       await db.setSettings(patch);
-      toast('Paramètres enregistrés');
+      toast('Paramètres enregistrés ✓');
       break;
     }
 

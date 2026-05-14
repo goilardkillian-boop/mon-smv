@@ -22,20 +22,30 @@ function fmtDate(iso) { if (!iso) return '—'; const d = new Date(iso); return 
 function fmtDateTime(iso) { if (!iso) return '—'; const d = new Date(iso); return d.toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
 function tag(label, cls = 'grey') { return `<span class="tag tag--${cls}">${label}</span>`; }
 
+export function adminNavItems(user) {
+  return [
+    ['admin',                  'Tableau',     ICONS.home,        canAccessAdmin(user)],
+    ['admin/utilisateurs',     'Utilisateurs',ICONS.users,       canAccessAdmin(user)],
+    ['admin/candidatures',     'Candidatures',ICONS.send,        canAccessAdmin(user) || canAccessRecrutement(user)],
+    ['admin/articles',         'Articles',    ICONS.book,        canAccessAdmin(user)],
+    ['admin/sections',         'Sections',    ICONS.shieldFull,  canAccessAdmin(user)],
+    ['admin/familles',         'Familles',    ICONS.users,       canAccessAdmin(user)],
+    ['recrutement',            'Recrutement', ICONS.graduation,  canAccessRecrutement(user)],
+    ['admin/parametres',       'Paramètres',  ICONS.cog,         canAccessAdmin(user)],
+    ['admin/audit',            'Audit',       ICONS.history,     canAccessAdmin(user)],
+    ['fondateur/sauvegardes',  'Sauvegardes', ICONS.database,    canAccessBackups(user)],
+  ].filter((x) => x[3]);
+}
+
 function adminHeader(active, user) {
-  const nav = [
-    ['admin',                'Tableau de bord', canAccessAdmin(user)],
-    ['admin/utilisateurs',   'Utilisateurs',    canAccessAdmin(user)],
-    ['admin/candidatures',   'Candidatures',    canAccessAdmin(user) || canAccessRecrutement(user)],
-    ['admin/sections',       'Sections',        canAccessAdmin(user)],
-    ['admin/familles',       'Familles',        canAccessAdmin(user)],
-    ['recrutement',          'Recrutement',     canAccessRecrutement(user)],
-    ['admin/parametres',     'Paramètres',      canAccessAdmin(user)],
-    ['admin/audit',          'Audit',           canAccessAdmin(user)],
-    ['fondateur/sauvegardes','Sauvegardes',     canAccessBackups(user)],
-  ].filter(([,,ok]) => ok);
+  const nav = adminNavItems(user);
   return `
     <header class="admin-header">
+      <button class="admin-header__burger" data-action="admin-burger" aria-label="Menu">
+        <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round">
+          <line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>
+        </svg>
+      </button>
       <img class="admin-header__logo" src="${getLogoUrl()}" alt="" />
       <div class="admin-header__brand">${db.getSettings().applicationName || 'Mon SMV'}<small>panel · 3ᵉ RSMV</small></div>
       <nav class="admin-header__nav">
@@ -46,7 +56,13 @@ function adminHeader(active, user) {
         <span>${user.firstName} · ${ROLES_LABELS[user.role]}</span>
         <button class="admin-header__logout" data-action="logout" aria-label="Déconnexion">${ICONS.logout}</button>
       </div>
-    </header>`;
+    </header>
+    <div class="admin-drawer" data-admin-drawer>
+      <div class="admin-drawer__panel" onclick="event.stopPropagation()">
+        ${nav.map(([slug, label, icon]) => `<a href="#/${slug}" class="${active === slug ? 'is-active' : ''}" data-action="admin-drawer-close">${icon}<span>${label}</span></a>`).join('')}
+        <button class="admin-drawer__close" data-action="logout">${ICONS.logout}<span>Déconnexion</span></button>
+      </div>
+    </div>`;
 }
 
 function shell(active, user, body) {
@@ -282,12 +298,11 @@ export function adminCandidatures(user) {
               <td>${c.postalCode}</td>
               <td>${c.goal}</td>
               <td>${c.email}<br><span class="muted" style="font-size:11px">${c.phone}</span></td>
-              <td>${tag(c.status || 'nouveau', c.status === 'traitee' ? 'green' : c.status === 'rejetee' ? 'red' : 'orange')}</td>
+              <td>${tag(c.status || 'nouveau', c.status === 'accepte' || c.status === 'inscrit' ? 'green' : c.status === 'rejete' || c.status === 'desiste' ? 'red' : c.status && c.status !== 'nouveau' ? 'navy' : 'orange')}</td>
               <td>
                 <div class="admin-table__actions">
+                  <button data-link="#/admin/candidatures/${c.id}" title="Suivi du dossier">${ICONS.eye}</button>
                   <button data-action="cand-promote" data-id="${c.id}" title="Pré-inscrire">${ICONS.plus}</button>
-                  <button data-action="cand-accept" data-id="${c.id}" title="Marquer traitée">${ICONS.check}</button>
-                  <button data-action="cand-reject" data-id="${c.id}" title="Rejeter" class="danger">${ICONS.close}</button>
                 </div>
               </td>
             </tr>`).join('')}
@@ -444,6 +459,20 @@ export function adminSettings(user) {
           <div class="admin-field"><label class="admin-field__label">Instagram</label><input class="admin-field__input" name="social_instagram" value="${s.socialUrls?.instagram || ''}" /></div>
         </div>
         <div class="admin-field"><label class="admin-field__label">LinkedIn</label><input class="admin-field__input" name="social_linkedin" value="${s.socialUrls?.linkedin || ''}" /></div>
+      </div>
+
+      <div class="admin-card">
+        <div class="admin-card__head"><h2 class="admin-card__title">Feed Instagram (affiché sur l'accueil)</h2></div>
+        <div class="admin-field">
+          <label class="admin-field__label">Pseudo Instagram (@…)</label>
+          <input class="admin-field__input" name="instagramHandle" value="${escapeAttr(s.instagramHandle || '')}" placeholder="3rsmv_officiel" />
+          <div class="admin-field__hint">Sans le @. Affichera une tuile cliquable vers le profil.</div>
+        </div>
+        <div class="admin-field">
+          <label class="admin-field__label">Code embed Instagram (optionnel, prioritaire)</label>
+          <textarea class="admin-field__textarea" name="instagramEmbed" placeholder="&lt;iframe src=&quot;...&quot; ...&gt;&lt;/iframe&gt;">${escapeAttr(s.instagramEmbed || '')}</textarea>
+          <div class="admin-field__hint">Colle ici un code &lt;iframe&gt; (depuis lightwidget.com, embedsocial, ou Instagram). Si rempli, remplace la tuile par le feed embarqué.</div>
+        </div>
       </div>
 
       <div class="admin-card">
@@ -782,5 +811,123 @@ export function adminSections(user) {
         }).join('')}
       </div>
     </div>
+  `);
+}
+
+/* ============================================================
+   ADMIN · Articles (news CRUD)
+   ============================================================ */
+export function adminArticles(user) {
+  const articles = db.all('news').sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  return shell('admin/articles', user, `
+    <div class="row-between mb-4">
+      <h1 class="admin-h1">Articles & <em>actualités</em></h1>
+      <button class="btn btn--navy" data-action="article-add">${ICONS.plus}<span>Nouvel article</span></button>
+    </div>
+    <p class="admin-sub">Les articles publiés apparaissent sur l'accueil des volontaires + la page Découvrir publique.</p>
+
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Date</th><th>Titre</th><th>Extrait</th><th>Statut</th><th></th></tr></thead>
+        <tbody>
+          ${articles.length === 0 ? `<tr><td colspan="5" style="text-align:center; padding: 24px; color: var(--ink-500);">Aucun article. Crée-en un avec le bouton +.</td></tr>` : ''}
+          ${articles.map((n) => `
+            <tr>
+              <td style="font-family: var(--font-mono); font-size: 11px">${escapeAttr(n.date || '—')}</td>
+              <td><strong>${escapeAttr(n.title)}</strong></td>
+              <td style="color: var(--ink-500); font-size: 12px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${escapeAttr(n.excerpt || '')}</td>
+              <td>${n.published ? tag('publié', 'green') : tag('brouillon', 'grey')}</td>
+              <td><div class="admin-table__actions">
+                <button data-action="article-edit" data-id="${n.id}">${ICONS.edit}</button>
+                <button data-action="article-toggle" data-id="${n.id}" title="${n.published ? 'Dépublier' : 'Publier'}">${n.published ? ICONS.eyeOff : ICONS.eye}</button>
+                <button data-action="article-delete" data-id="${n.id}" class="danger">${ICONS.trash}</button>
+              </div></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `);
+}
+
+/* ============================================================
+   RECRUTEMENT · Détail candidature avec workflow
+   ============================================================ */
+export function recrutementCandidature(user, id) {
+  const c = db.byId('candidatures', id);
+  if (!c) return shell('admin/candidatures', user, `<p>Candidature introuvable.</p>`);
+  const incos = db.all('incorporations');
+  const linked = c.linkedUserId ? db.byId('users', c.linkedUserId) : null;
+  const STATUS_FLOW = [
+    { value: 'nouveau',   label: 'Nouveau',          color: 'orange' },
+    { value: 'contacte',  label: 'Contact pris',     color: 'navy' },
+    { value: 'entretien', label: 'Entretien planifié',color: 'navy' },
+    { value: 'visite',    label: 'Visite régiment',  color: 'navy' },
+    { value: 'accepte',   label: 'Accepté',          color: 'green' },
+    { value: 'inscrit',   label: 'Inscrit',          color: 'fluo' },
+    { value: 'rejete',    label: 'Rejeté',           color: 'red' },
+    { value: 'desiste',   label: 'Désisté',          color: 'grey' },
+  ];
+  return shell('admin/candidatures', user, `
+    <div class="row-between mb-4">
+      <div>
+        <h1 class="admin-h1">${escapeAttr(c.firstName)} ${escapeAttr(c.lastName)}</h1>
+        <p class="admin-sub">${c.age} ans · ${escapeAttr(c.postalCode || '')} · reçue le ${fmtDateTime(c.createdAt)}</p>
+      </div>
+      <button class="btn btn--ghost-ink" data-link="#/admin/candidatures">Retour</button>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card__head"><h2 class="admin-card__title">Suivi du dossier</h2></div>
+      <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;">
+        ${STATUS_FLOW.map((s) => `
+          <button class="btn ${c.status === s.value ? 'btn--navy' : 'btn--ghost-ink'} btn--sm" data-action="cand-status" data-id="${c.id}" data-status="${s.value}">${s.label}</button>
+        `).join('')}
+      </div>
+      <div class="admin-field">
+        <label class="admin-field__label">Affecter à une incorporation</label>
+        <select class="admin-field__select" data-action="cand-incorporation" data-id="${c.id}">
+          <option value="">—</option>
+          ${incos.map((i) => `<option value="${i.slug}" ${c.incorporation === i.slug ? 'selected' : ''}>${i.label}</option>`).join('')}
+        </select>
+      </div>
+      <div class="admin-field">
+        <label class="admin-field__label">Notes internes (RGPD : visible uniquement par admin/mod/recrutement)</label>
+        <textarea class="admin-field__textarea" data-cand-notes data-id="${c.id}" placeholder="Notes d'entretien, retours, points d'attention…">${escapeAttr(c.notes || '')}</textarea>
+        <button class="btn btn--ghost-ink btn--sm" style="margin-top: 8px" data-action="cand-save-notes" data-id="${c.id}">${ICONS.check}<span>Enregistrer les notes</span></button>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card__head"><h2 class="admin-card__title">Coordonnées</h2></div>
+      <div class="admin-field--row">
+        <div class="admin-field">
+          <label class="admin-field__label">Email</label>
+          <input class="admin-field__input" value="${escapeAttr(c.email || '')}" readonly />
+        </div>
+        <div class="admin-field">
+          <label class="admin-field__label">Téléphone</label>
+          <input class="admin-field__input" value="${escapeAttr(c.phone || '')}" readonly />
+        </div>
+      </div>
+      <div class="admin-field">
+        <label class="admin-field__label">Recherche</label>
+        <input class="admin-field__input" value="${escapeAttr(c.goal || '')}" readonly />
+      </div>
+      <div style="display:flex; gap: 8px; margin-top: 12px;">
+        <a class="btn btn--ghost-ink btn--sm" href="mailto:${escapeAttr(c.email || '')}">${ICONS.send}<span>Envoyer un email</span></a>
+        <a class="btn btn--ghost-ink btn--sm" href="tel:${escapeAttr((c.phone || '').replace(/\s/g, ''))}">${ICONS.user}<span>Appeler</span></a>
+      </div>
+    </div>
+
+    ${linked ? `
+      <div class="admin-card">
+        <div class="admin-card__head"><h2 class="admin-card__title">Compte volontaire créé</h2></div>
+        <p>Compte <code>@${linked.username}</code> · ${ROLES_LABELS[linked.role]} · ${linked.section || '—'}</p>
+      </div>` : `
+      <div class="admin-card">
+        <div class="admin-card__head"><h2 class="admin-card__title">Pré-inscription</h2></div>
+        <p class="muted">Quand la candidature est acceptée, tu peux créer son compte volontaire en un clic.</p>
+        <button class="btn btn--fluo" data-action="cand-promote" data-id="${c.id}">${ICONS.plus}<span>Créer le compte jeune</span></button>
+      </div>`}
   `);
 }
