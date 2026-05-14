@@ -225,10 +225,10 @@ function nextIncorporationCard() {
     <div class="section-title section-title--green">Prochaine incorporation</div>
     <div class="px-4" style="padding-bottom: 8px">
       <div class="card" style="padding: 18px;">
-        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 10px;">
           <div>
             <div style="font-family: var(--font-display); font-weight: 700; font-size: 22px; text-transform: uppercase; letter-spacing: .02em">${escapeHtml(next.label)}</div>
-            <div class="muted" style="font-size: 12px; margin-top: 2px">${(next.seats || 0) - (next.seatsTaken || 0)} places restantes sur ${next.seats || 0}</div>
+            <div class="muted" style="font-size: 12px; margin-top: 2px">Formations proposées</div>
           </div>
           <span class="tag tag--green">ouverte</span>
         </div>
@@ -238,7 +238,7 @@ function nextIncorporationCard() {
               <div style="display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; background: var(--bg-cream); border-radius: 10px;">
                 <div>
                   <div style="font-family: var(--font-display); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em">${escapeHtml(f.name)}</div>
-                  <div style="font-size: 11px; color: var(--ink-500); margin-top: 2px">Code <code>${escapeHtml(f.code)}</code> · ${escapeHtml(f.duration || '')} · ${f.capacity} places</div>
+                  <div style="font-size: 11px; color: var(--ink-500); margin-top: 2px">Code <code>${escapeHtml(f.code)}</code>${f.duration ? ' · ' + escapeHtml(f.duration) : ''}</div>
                 </div>
               </div>`).join('')}
           </div>` : '<p class="muted" style="margin: 10px 0 0; font-size: 12px">Formations à venir.</p>'}
@@ -515,6 +515,8 @@ function screenAccueil() {
         <button class="tile" data-link="#/notes"><div class="tile__icon">${ICONS.notebook}</div><div><div class="tile__name">Mes notes</div><div class="tile__count">${db.count('notes', (n) => n.userId === u.id)} brouillons</div></div></button>
         <button class="tile" data-link="#/ressources"><div class="tile__icon">${ICONS.folder}</div><div><div class="tile__name">Ressources</div><div class="tile__count">Module 3</div></div></button>
       </div>
+
+      ${nextIncorporationCard()}
 
       ${latestArticlesCard(3)}
 
