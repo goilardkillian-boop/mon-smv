@@ -79,10 +79,18 @@ function humanError(msg) {
 }
 
 export async function logout() {
-  await supabase.auth.signOut();
+  // IMPORTANT : on vide le cache utilisateur SYNCHRONIQUEMENT avant le signOut.
+  // Sinon le listener onAuthStateChange est asynchrone (await loadAll), et un render()
+  // appelé juste après authLogout() voit encore l'ancien _currentUser → la redirection
+  // depuis /admin vers /connexion ne fonctionne pas (l'utilisateur "reste connecté").
   _currentUser = null;
   _session = null;
   notify();
+  try {
+    await supabase.auth.signOut();
+  } catch (e) {
+    console.warn('signOut error (non bloquant)', e);
+  }
 }
 
 /* -------- Changement de mdp (utilisateur connecté) -------- */
