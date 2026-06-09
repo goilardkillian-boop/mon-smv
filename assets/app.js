@@ -9,15 +9,20 @@
 
 import { ICONS } from './icons.js';
 import {
-  db, getBackups, restoreBackup, backupNow, deleteBackup, tickAutoBackup, onChange, uid,
+  db, onChange, getLogoUrl, logAction,
+  getBackups, backupNow, restoreBackup, deleteBackup,
 } from './db.js';
 import {
-  createUser, login as authLogin, logout as authLogout, changePassword,
+  initAuth, onAuthChange,
+  login as authLogin, logout as authLogout, changePassword,
   resetPasswordByAdmin, currentUser, ROLES_LABELS, RELATIONSHIPS,
   canAccessAdmin, canAccessBackups, canAccessRecrutement, slug, genInviteCode,
+  createUser,
 } from './auth.js';
 import { seedIfEmpty } from './seed.js';
+import { supabase } from './supabase-client.js';
 import * as Admin from './screens-admin.js';
+import * as Social from './social.js';
 
 /* ----------------------------------------------------------
    UI state éphémère (filtres, brouillons)
@@ -64,11 +69,24 @@ function blob({ kind = 'navy', label = '', svg = 'dots' } = {}) {
 
 function toast(msg, kind = '') {
   const el = document.createElement('div');
-  el.className = 'toast';
+  el.className = 'toast' + (kind ? ' toast--' + kind : '');
   el.textContent = msg;
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 2500);
+  setTimeout(() => el.remove(), 2800);
 }
+
+// Erreurs non gérées (promesses rejetées dans des handlers) → toast visible
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = e.reason?.message || e.reason || 'Erreur inconnue';
+  console.error('Unhandled rejection:', e.reason);
+  toast('⚠️ ' + msg, 'error');
+});
+window.addEventListener('error', (e) => {
+  if (e.error) {
+    console.error('Window error:', e.error);
+    toast('⚠️ ' + (e.error.message || e.message), 'error');
+  }
+});
 
 function bottomNav(role, active) {
   let items = [];
@@ -104,6 +122,23 @@ function bottomNav(role, active) {
         <button class="bottom-nav__item ${active === slug ? 'bottom-nav__item--active' : ''}" data-link="#/${slug}">
           ${icon}<span>${label}</span>
         </button>`).join('')}
+    </nav>`;
+}
+
+/* Sidebar admin (utilisée sur desktop pour les rôles admin/mod/recru/fondateur).
+   Sur mobile, l'admin-header__nav (scrollable horizontalement) fait le job. */
+function adminSidebar(active, user) {
+  // Source unique de vérité : adminNavItems exporté depuis screens-admin
+  const items = Admin.adminNavItems(user);
+  return `
+    <nav class="bottom-nav">
+      ${items.map(([slug, label, icon]) => `
+        <button class="bottom-nav__item ${active === slug ? 'bottom-nav__item--active' : ''}" data-link="#/${slug}">
+          ${icon}<span>${label}</span>
+        </button>`).join('')}
+      <button class="bottom-nav__item" data-action="logout" style="margin-top: auto; color: var(--red)">
+        ${ICONS.logout}<span>Déconnexion</span>
+      </button>
     </nav>`;
 }
 
@@ -167,6 +202,11 @@ function screenDecouvrir() {
               <div><div class="parcours__name">${t}</div><div class="parcours__desc">${d}</div></div>
             </div>`).join('')}
         </div>
+
+        ${nextIncorporationCard()}
+
+        ${latestArticlesCard(3)}
+
         <div class="px-4" style="padding-bottom: 20px">
           <button class="btn btn--navy btn--block" data-link="#/candidature">${s.candidatureButtonLabel || 'Envoyer ma demande'}</button>
           <button class="btn btn--ghost-ink btn--block mt-4" data-link="#/connexion">J'ai déjà un compte</button>
@@ -174,6 +214,84 @@ function screenDecouvrir() {
       </div>
       ${bottomNav('visitor', 'decouvrir')}
     </section>`;
+}
+
+/* Composants partagés (utilisés sur découvrir + accueil) */
+function nextIncorporationCard() {
+  const incos = db.filter('incorporations', (i) => i.open).sort((a, b) => `${a.year}-${String(a.month).padStart(2,'0')}`.localeCompare(`${b.year}-${String(b.month).padStart(2,'0')}`));
+  const next = incos[0];
+  if (!next) return '';
+  const formations = db.filter('formations', (f) => f.incorporationId === next.id);
+  return `
+    <div class="section-title section-title--green">Prochaine incorporation</div>
+    <div class="px-4" style="padding-bottom: 8px">
+      <div class="card" style="padding: 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 10px;">
+          <div>
+            <div style="font-family: var(--font-display); font-weight: 700; font-size: 22px; text-transform: uppercase; letter-spacing: .02em">${escapeHtml(next.label)}</div>
+            <div class="muted" style="font-size: 12px; margin-top: 2px">Formations proposées</div>
+          </div>
+          <span class="tag tag--green">ouverte</span>
+        </div>
+        ${formations.length > 0 ? `
+          <div style="margin-top: 14px; display: flex; flex-direction: column; gap: 8px;">
+            ${formations.map((f) => `
+              <div style="display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; background: var(--bg-cream); border-radius: 10px;">
+                <div>
+                  <div style="font-family: var(--font-display); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em">${escapeHtml(f.name)}</div>
+                  <div style="font-size: 11px; color: var(--ink-500); margin-top: 2px">Code <code>${escapeHtml(f.code)}</code>${f.duration ? ' · ' + escapeHtml(f.duration) : ''}</div>
+                </div>
+              </div>`).join('')}
+          </div>` : '<p class="muted" style="margin: 10px 0 0; font-size: 12px">Formations à venir.</p>'}
+      </div>
+    </div>`;
+}
+
+function latestArticlesCard(limit = 3) {
+  const articles = db.filter('news', (n) => n.published !== false).slice(0, limit);
+  if (articles.length === 0) return '';
+  return `
+    <div class="section-title">Dernières actualités</div>
+    <div style="padding: 0 16px 8px;">
+      ${articles.map((n) => `
+        <div class="card" style="margin-bottom: 10px; display:grid; grid-template-columns: 78px 1fr; gap: 12px; padding: 10px">
+          <div style="width:78px; aspect-ratio:1; border-radius:12px; overflow:hidden">${blob({ kind: n.kind || 'navy', svg: 'dots' })}</div>
+          <div style="align-self:center">
+            <div style="font-family: var(--font-mono); font-size: 10px; color: var(--green); letter-spacing: .08em; text-transform: uppercase">${escapeHtml(n.date || '')}</div>
+            <div style="font-family: var(--font-display); font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: .03em; margin-top: 2px">${escapeHtml(n.title)}</div>
+            <div style="font-size: 12px; color: var(--ink-500); margin-top: 2px">${escapeHtml(n.excerpt || '')}</div>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function instagramEmbedCard() {
+  const s = db.getSettings();
+  const embed = (s.instagramEmbed || '').trim();
+  const handle = (s.instagramHandle || '').trim();
+  if (!embed && !handle) return '';
+  if (embed && /<iframe/i.test(embed)) {
+    return `<div class="section-title">Instagram du régiment</div>
+      <div class="px-4" style="padding-bottom: 12px;">
+        <div class="card" style="padding: 0; overflow: hidden;">${embed}</div>
+      </div>`;
+  }
+  if (handle) {
+    const url = `https://instagram.com/${handle.replace(/^@/, '')}`;
+    return `<div class="section-title">Instagram du régiment</div>
+      <div class="px-4" style="padding-bottom: 12px;">
+        <a class="card" href="${url}" target="_blank" rel="noopener" style="display: flex; align-items: center; gap: 12px; padding: 14px; text-decoration: none;">
+          <div style="width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(45deg, #feda75, #fa7e1e, #d62976, #962fbf, #4f5bd5); display: grid; place-items: center;">
+            <svg viewBox="0 0 24 24" stroke="white" fill="none" stroke-width="2" width="22" height="22"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1.2" fill="white"/></svg>
+          </div>
+          <div>
+            <div style="font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; font-size: 13px;">Suis-nous sur Instagram</div>
+            <div style="font-size: 12px; color: var(--ink-500); margin-top: 2px;">@${escapeHtml(handle.replace(/^@/, ''))}</div>
+          </div>
+        </a>
+      </div>`;
+  }
+  return '';
 }
 
 function screenGalerie() {
@@ -294,8 +412,8 @@ function screenConnexion() {
       ${topbar({ back: true })}
       <div class="auth-wrap">
         <div class="auth-wrap__brand">
-          <img src="./assets/img/logo.svg" alt="" />
-          <div><small>3ᵉ RSMV · La Rochelle</small><strong>Mon SMV</strong></div>
+          <img src="${getLogoUrl()}" alt="" />
+          <div><small>3ᵉ RSMV · La Rochelle</small><strong>${escapeHtml(db.getSettings().applicationName || 'Mon SMV')}</strong></div>
         </div>
         <div class="eyebrow">// connexion</div>
         <h2 class="auth-wrap__title">Te voilà<br/><em>de retour.</em></h2>
@@ -316,10 +434,13 @@ function screenConnexion() {
         </form>
 
         <div class="demo-creds">
-          <strong>Comptes de démonstration</strong><br/>
-          jeune <strong>l.morel</strong> · cadre <strong>t.bertin</strong> · famille <strong>fam.morel</strong><br/>
-          modérateur <strong>mod</strong> · admin <strong>admin</strong> · recrutement <strong>recrutement</strong> · fondateur <strong>fondateur</strong><br/>
-          Le mot de passe est le rôle (ex. <strong>jeune</strong>, <strong>admin</strong>, etc.).
+          <strong>Comptes de démo</strong><br/>
+          • admin <strong>admin</strong> / <strong>admin123</strong><br/>
+          • modérateur <strong>mod</strong> / <strong>mod1234</strong><br/>
+          • recrutement <strong>recrutement</strong> / <strong>recrutement</strong><br/>
+          • fondateur <strong>fondateur</strong> / <strong>fondateur</strong><br/>
+          • cadre <strong>t.bertin</strong> / <strong>cadre1</strong><br/>
+          • jeune <strong>l.morel</strong> / <strong>jeune1</strong>
         </div>
       </div>
     </section>`;
@@ -396,18 +517,13 @@ function screenAccueil() {
         <button class="tile" data-link="#/ressources"><div class="tile__icon">${ICONS.folder}</div><div><div class="tile__name">Ressources</div><div class="tile__count">Module 3</div></div></button>
       </div>
 
-      <div class="section-title">Actualités du régiment</div>
-      <div style="padding: 0 16px 24px">
-        ${db.filter('news', (n) => n.published !== false).slice(0, 3).map((n) => `
-          <div class="card" style="margin-bottom: 10px; display:grid; grid-template-columns: 78px 1fr; gap: 12px; padding: 10px">
-            <div style="width:78px; aspect-ratio:1; border-radius:12px; overflow:hidden">${blob({ kind: n.kind, svg: 'dots' })}</div>
-            <div style="align-self:center">
-              <div style="font-family: var(--font-mono); font-size: 10px; color: var(--green); letter-spacing: .08em; text-transform: uppercase">${n.date}</div>
-              <div style="font-family: var(--font-display); font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: .03em; margin-top: 2px">${escapeHtml(n.title)}</div>
-              <div style="font-size: 12px; color: var(--ink-500); margin-top: 2px">${escapeHtml(n.excerpt)}</div>
-            </div>
-          </div>`).join('')}
-      </div>
+      ${nextIncorporationCard()}
+
+      ${latestArticlesCard(3)}
+
+      ${instagramEmbedCard()}
+
+      <div style="padding: 0 16px 24px"></div>
       ${bottomNav('jeune', 'accueil')}
     </section>`;
 }
@@ -1060,12 +1176,24 @@ function resolve() {
 
   // Connecté
   if (route === '' || route === 'connexion') {
-    // routage par défaut selon le rôle
-    if (canAccessAdmin(user) && !['cadre'].includes(user.role)) location.hash = '#/admin';
+    // Par défaut, après login : tout le monde sur le feed social
+    if (canAccessAdmin(user) && user.role !== 'cadre' && user.role !== 'jeune') location.hash = '#/admin';
     else if (user.role === 'recrutement') location.hash = '#/recrutement';
-    else if (user.role === 'cadre') location.hash = '#/pilote';
-    else if (user.role === 'famille') location.hash = '#/famille/photos';
-    else location.hash = '#/accueil';
+    else location.hash = '#/feed';
+    return resolve();
+  }
+
+  // Anciennes routes "jeune dashboard" → redirection vers le feed social
+  // (pour les utilisateurs qui ont d'anciens liens en favoris)
+  const LEGACY_REDIRECTS = {
+    'accueil': '#/feed',
+    'tchat': '#/feed',
+    'emploi': '#/feed',
+    'famille/photos': '#/feed',
+    'famille/tchat': '#/dm',
+  };
+  if (LEGACY_REDIRECTS[route] && (user.role === 'jeune' || user.role === 'famille' || user.role === 'cadre')) {
+    location.hash = LEGACY_REDIRECTS[route];
     return resolve();
   }
 
@@ -1077,6 +1205,18 @@ function resolve() {
   if (route === 'visite')      return screenVisite();
   if (route === 'candidature') return screenCandidature();
 
+  // ===== Routes réseau social =====
+  if (route === 'feed') return Social.feedScreen();
+  if (route === 'recherche') return Social.searchScreen(ui.searchQuery || '');
+  if (route === 'composer') return Social.composerScreen(false);
+  if (route === 'composer/bereal') return Social.composerScreen(true);
+  if (route === 'dm') return Social.dmListScreen();
+  if (route.startsWith('dm/')) return Social.dmConvScreen(route.split('/')[1]);
+  if (route.startsWith('post/')) return Social.postDetailScreen(route.split('/')[1]);
+  if (route.startsWith('profil/')) return Social.profileScreen(route.split('/')[1]);
+  if (route.startsWith('story/')) return Social.storyScreen(route.split('/')[1]);
+  if (route === 'moi/edit') return Social.moiEditScreen();
+
   // Admin/recrutement/fondateur
   if (isAdminPath(route)) {
     if (route === 'admin' && canAccessAdmin(user)) return Admin.adminDashboard(user);
@@ -1084,9 +1224,15 @@ function resolve() {
     if (route === 'admin/utilisateurs/nouveau' && canAccessAdmin(user)) return Admin.adminUserForm(user, 'nouveau');
     if (route.startsWith('admin/utilisateurs/') && canAccessAdmin(user)) return Admin.adminUserForm(user, route.split('/')[2]);
     if (route === 'admin/candidatures' && (canAccessAdmin(user) || canAccessRecrutement(user))) return Admin.adminCandidatures(user);
+    if (route === 'admin/sections' && canAccessAdmin(user)) return Admin.adminSections(user);
     if (route === 'admin/familles' && canAccessAdmin(user)) return Admin.adminFamilles(user);
     if (route === 'admin/parametres' && canAccessAdmin(user)) return Admin.adminSettings(user);
-    if (route === 'admin/audit' && canAccessAdmin(user)) return Admin.adminAudit(user);
+    if (route === 'admin/audit' && canAccessAdmin(user)) return Admin.adminAudit(user, ui.auditFilters || {});
+    if (route === 'admin/articles' && canAccessAdmin(user)) return Admin.adminArticles(user);
+    if (route.startsWith('admin/candidatures/') && (canAccessAdmin(user) || canAccessRecrutement(user))) {
+      const cid = route.split('/')[2];
+      return Admin.recrutementCandidature(user, cid);
+    }
     if (route === 'recrutement' && canAccessRecrutement(user)) return Admin.recrutementDashboard(user);
     if (route.startsWith('recrutement/incorporations/') && canAccessRecrutement(user)) return Admin.recrutementInco(user, route.split('/')[2]);
     if (route === 'fondateur/sauvegardes' && canAccessBackups(user)) return Admin.fondateurBackups(user);
@@ -1124,9 +1270,42 @@ function resolve() {
    RENDER
    ============================================================ */
 function render() {
-  $app.innerHTML = resolve();
+  const route = getRoute();
+  const user = currentUser();
+  const isAdmin = isAdminPath(route);
+  let html = resolve();
+
+  // Sur les routes admin, prépend la sidebar admin (pour layout desktop)
+  if (isAdmin && user) {
+    const active = computeAdminActive(route);
+    html = adminSidebar(active, user) + html;
+  }
+  $app.innerHTML = html;
+
+  // Promouvoir la bottom-nav éventuellement imbriquée dans .screen
+  // pour qu'elle soit un enfant direct de .app (nécessaire au layout
+  // desktop en grid : grid-area: nav).
+  const nestedNav = $app.querySelector('.screen .bottom-nav');
+  if (nestedNav) {
+    $app.insertBefore(nestedNav, $app.firstChild);
+  }
+
   document.body.scrollTop = 0;
   $app.scrollTop = 0;
+}
+
+function computeAdminActive(route) {
+  if (route === 'admin' || route === '') return 'admin';
+  if (route.startsWith('admin/utilisateurs')) return 'admin/utilisateurs';
+  if (route.startsWith('admin/candidatures')) return 'admin/candidatures';
+  if (route.startsWith('admin/articles')) return 'admin/articles';
+  if (route.startsWith('admin/sections')) return 'admin/sections';
+  if (route.startsWith('admin/familles')) return 'admin/familles';
+  if (route.startsWith('admin/parametres')) return 'admin/parametres';
+  if (route.startsWith('admin/audit')) return 'admin/audit';
+  if (route.startsWith('recrutement')) return 'recrutement';
+  if (route.startsWith('fondateur/sauvegardes')) return 'fondateur/sauvegardes';
+  return route;
 }
 
 window.addEventListener('hashchange', render);
@@ -1142,7 +1321,90 @@ document.addEventListener('click', async (e) => {
   if (link) { e.preventDefault(); location.hash = link.getAttribute('data-link'); return; }
 
   if (e.target.closest('[data-action="back"]')) { history.length > 1 ? history.back() : (location.hash = '#/'); return; }
-  if (e.target.closest('[data-action="logout"]')) { authLogout(); location.hash = '#/connexion'; render(); return; }
+
+  /* ============ RÉSEAU SOCIAL ============ */
+  if (e.target.closest('[data-action="like"]')) {
+    const btn = e.target.closest('[data-action="like"]');
+    const postId = btn.getAttribute('data-id');
+    try {
+      await Social.toggleLike(postId);
+      render();
+    } catch (err) { toast('Erreur like : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="post-menu"]')) {
+    const btn = e.target.closest('[data-action="post-menu"]');
+    const postId = btn.getAttribute('data-id');
+    const p = db.byId('posts', postId);
+    const me = currentUser();
+    const canDelete = p?.authorId === me.id || ['admin','moderateur','cadre'].includes(me.role);
+    const canHide = ['admin','moderateur','cadre'].includes(me.role);
+    const options = [];
+    if (canDelete) options.push('Supprimer');
+    if (canHide && !p.hidden) options.push('Masquer (modération)');
+    if (options.length === 0) return;
+    const choice = await confirmModal(`Que faire avec ce post ?\n\n${options.join(' · ')}`, { confirmLabel: 'Supprimer', danger: true });
+    if (!choice) return;
+    try {
+      if (canDelete) {
+        await db.remove('posts', postId);
+        toast('Post supprimé');
+        if (location.hash.startsWith('#/post/')) location.hash = '#/feed';
+      }
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="comment-delete"]')) {
+    const id = e.target.closest('[data-action="comment-delete"]').getAttribute('data-id');
+    if (!(await confirmModal('Supprimer ce commentaire ?', { confirmLabel: 'Supprimer', danger: true }))) return;
+    try { await db.remove('comments', id); render(); } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="toggle-privacy"]')) {
+    const me = currentUser();
+    try {
+      await db.update('users', me.id, { isPrivate: !me.isPrivate });
+      toast(me.isPrivate ? 'Profil rendu public 🌍' : 'Profil rendu privé 🔒');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="bereal-trigger"]')) {
+    if (!(await confirmModal('Déclencher un round BeReal de 2 minutes pour tout le monde ?', { confirmLabel: 'Déclencher' }))) return;
+    try {
+      await Social.triggerBereal(2);
+      toast('BeReal déclenché ⏱ 2 minutes');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+
+  // Burger menu admin (mobile)
+  if (e.target.closest('[data-action="admin-burger"]')) {
+    document.querySelector('[data-admin-drawer]')?.classList.add('is-open');
+    return;
+  }
+  if (e.target.closest('[data-action="admin-drawer-close"]')) {
+    document.querySelector('[data-admin-drawer]')?.classList.remove('is-open');
+    // ne pas return — laisse le lien (href) s'exécuter
+  }
+  // Click sur le fond de l'offcanvas pour fermer
+  if (e.target.matches('[data-admin-drawer]')) {
+    e.target.classList.remove('is-open');
+    return;
+  }
+  if (e.target.closest('[data-action="logout"]')) {
+    try {
+      const u = currentUser();
+      if (u) await logAction(`Déconnexion de ${u.firstName} ${u.lastName}`, 'session', u.id);
+      await authLogout();
+      location.hash = '#/connexion';
+      render();
+      toast('Tu es déconnecté·e');
+    } catch (err) {
+      console.error('logout failed', err);
+      toast('Erreur déconnexion : ' + (err?.message || err));
+    }
+    return;
+  }
   if (e.target.closest('[data-toast]')) { toast(e.target.closest('[data-toast]').getAttribute('data-toast')); return; }
 
   // Galerie filter
@@ -1185,25 +1447,97 @@ document.addEventListener('click', async (e) => {
   }
   if (e.target.closest('[data-action="user-reset-password"]')) {
     const id = e.target.closest('[data-action="user-reset-password"]').getAttribute('data-id');
-    if (!confirm('Réinitialiser le mot de passe et forcer un changement au prochain login ?')) return;
+    if (!(await confirmModal('Réinitialiser le mot de passe et forcer un changement au prochain login ?'))) return;
     const newPwd = await resetPasswordByAdmin(id);
     const u = db.byId('users', id);
+    logAction(`Mot de passe réinitialisé pour ${u.firstName} ${u.lastName} (@${u.username})`, 'users', u.id);
     showResetPasswordModal(u, newPwd);
     return;
   }
   if (e.target.closest('[data-action="user-toggle-active"]')) {
     const id = e.target.closest('[data-action="user-toggle-active"]').getAttribute('data-id');
     const u = db.byId('users', id);
-    db.update('users', id, { active: !u.active });
+    await db.update('users', id, { active: !u.active });
     toast(u.active ? 'Compte désactivé' : 'Compte réactivé');
     return;
   }
   if (e.target.closest('[data-action="user-delete"]')) {
     const id = e.target.closest('[data-action="user-delete"]').getAttribute('data-id');
     const u = db.byId('users', id);
-    if (!confirm(`Supprimer définitivement le compte ${u.username} ? Cette action est tracée dans l'audit log.`)) return;
-    db.remove('users', id);
+    if (!(await confirmModal(`Supprimer définitivement le compte ${u.username} ? Cette action est tracée dans l'audit log.`))) return;
+    await db.remove('users', id);
     toast('Compte supprimé');
+    return;
+  }
+
+  /* ------- ARTICLES (news CRUD) ------- */
+  if (e.target.closest('[data-action="article-add"]')) {
+    const r = await inputModal({
+      title: 'Nouvel article',
+      fields: [
+        { name: 'title', label: 'Titre', required: true },
+        { name: 'excerpt', label: 'Extrait (résumé court)', type: 'textarea' },
+        { name: 'date', label: 'Date affichée (ex. 12/05)', value: new Date().toLocaleDateString('fr-FR', { day:'2-digit', month:'2-digit' }) },
+        { name: 'kind', label: 'Couleur visuel', type: 'select', value: 'navy', options: [
+          { value: 'navy', label: 'Marine' }, { value: 'green', label: 'Vert' }, { value: 'lightblue', label: 'Bleu clair' },
+        ]},
+      ],
+      submitLabel: 'Publier',
+    });
+    if (!r) return;
+    try {
+      await db.insert('news', { ...r, published: true });
+      toast('Article publié ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="article-edit"]')) {
+    const id = e.target.closest('[data-action="article-edit"]').getAttribute('data-id');
+    const n = db.byId('news', id);
+    if (!n) return;
+    const r = await inputModal({
+      title: 'Modifier l\'article',
+      fields: [
+        { name: 'title', label: 'Titre', value: n.title, required: true },
+        { name: 'excerpt', label: 'Extrait', type: 'textarea', value: n.excerpt || '' },
+        { name: 'date', label: 'Date affichée', value: n.date || '' },
+      ],
+      submitLabel: 'Enregistrer',
+    });
+    if (!r) return;
+    try { await db.update('news', id, r); toast('Article mis à jour ✓'); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="article-toggle"]')) {
+    const id = e.target.closest('[data-action="article-toggle"]').getAttribute('data-id');
+    const n = db.byId('news', id);
+    try { await db.update('news', id, { published: !n.published }); toast(n.published ? 'Dépublié' : 'Publié ✓'); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="article-delete"]')) {
+    const id = e.target.closest('[data-action="article-delete"]').getAttribute('data-id');
+    if (!(await confirmModal('Supprimer cet article ?', { confirmLabel: 'Supprimer', danger: true }))) return;
+    try { await db.remove('news', id); toast('Article supprimé ✓'); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+
+  /* ------- CANDIDATURE workflow (statuts) ------- */
+  if (e.target.closest('[data-action="cand-status"]')) {
+    const btn = e.target.closest('[data-action="cand-status"]');
+    const id = btn.getAttribute('data-id');
+    const status = btn.getAttribute('data-status');
+    try { await db.update('candidatures', id, { status }); toast(`Statut → ${status}`); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="cand-save-notes"]')) {
+    const id = e.target.closest('[data-action="cand-save-notes"]').getAttribute('data-id');
+    const ta = document.querySelector(`[data-cand-notes][data-id="${id}"]`);
+    try { await db.update('candidatures', id, { notes: ta?.value || '' }); toast('Notes enregistrées ✓'); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
 
@@ -1211,19 +1545,19 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('[data-action="cand-promote"]')) {
     const id = e.target.closest('[data-action="cand-promote"]').getAttribute('data-id');
     const c = db.byId('candidatures', id);
-    if (!confirm(`Pré-inscrire ${c.firstName} ${c.lastName} comme jeune volontaire ?`)) return;
+    if (!(await confirmModal(`Pré-inscrire ${c.firstName} ${c.lastName} comme jeune volontaire ?`))) return;
     const { user: u, initialPassword } = await createUser({ firstName: c.firstName, lastName: c.lastName, email: c.email, role: 'jeune' });
-    db.update('candidatures', id, { status: 'traitee', linkedUserId: u.id });
+    await db.update('candidatures', id, { status: 'traitee', linkedUserId: u.id });
     showResetPasswordModal(u, initialPassword);
     return;
   }
   if (e.target.closest('[data-action="cand-accept"]')) {
-    db.update('candidatures', e.target.closest('[data-action="cand-accept"]').getAttribute('data-id'), { status: 'traitee' });
+    await db.update('candidatures', e.target.closest('[data-action="cand-accept"]').getAttribute('data-id'), { status: 'traitee' });
     toast('Candidature marquée traitée');
     return;
   }
   if (e.target.closest('[data-action="cand-reject"]')) {
-    db.update('candidatures', e.target.closest('[data-action="cand-reject"]').getAttribute('data-id'), { status: 'rejetee' });
+    await db.update('candidatures', e.target.closest('[data-action="cand-reject"]').getAttribute('data-id'), { status: 'rejetee' });
     toast('Candidature rejetée');
     return;
   }
@@ -1231,18 +1565,27 @@ document.addEventListener('click', async (e) => {
   // Invitations
   if (e.target.closest('[data-action="inv-revoke"]')) {
     const id = e.target.closest('[data-action="inv-revoke"]').getAttribute('data-id');
-    if (!confirm('Révoquer cette invitation ?')) return;
-    db.update('invitations', id, { status: 'expiree' });
+    if (!(await confirmModal('Révoquer cette invitation ?'))) return;
+    await db.update('invitations', id, { status: 'expiree' });
     return;
   }
 
-  // Recrutement
+  // Recrutement · incorporations
   if (e.target.closest('[data-action="inco-add"]')) {
-    const label = prompt('Libellé de la nouvelle incorporation (ex: Mai 2027)');
-    if (!label) return;
-    const sl = slug(label) || ('inco-' + Date.now());
-    db.insert('incorporations', { label, slug: sl, open: true, seats: 132, seatsTaken: 0 });
-    toast('Incorporation ajoutée');
+    const r = await inputModal({
+      title: 'Nouvelle incorporation',
+      fields: [
+        { name: 'label', label: 'Libellé (ex. Mai 2027)', placeholder: 'Mai 2027', required: true },
+        { name: 'seats', label: 'Places', type: 'number', value: 132 },
+      ],
+      submitLabel: 'Créer',
+    });
+    if (!r) return;
+    const sl = slug(r.label) || ('inco-' + Date.now());
+    try {
+      await db.insert('incorporations', { label: r.label, slug: sl, open: true, seats: r.seats || 132, seatsTaken: 0 });
+      toast('Incorporation ajoutée ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="inco-edit"]')) {
@@ -1252,37 +1595,71 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('[data-action="inco-toggle"]')) {
     const id = e.target.closest('[data-action="inco-toggle"]').getAttribute('data-id');
     const i = db.byId('incorporations', id);
-    db.update('incorporations', id, { open: !i.open });
+    try {
+      await db.update('incorporations', id, { open: !i.open });
+      toast(i.open ? 'Inscriptions fermées' : 'Inscriptions ouvertes');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="inco-delete"]')) {
     const id = e.target.closest('[data-action="inco-delete"]').getAttribute('data-id');
-    if (!confirm('Supprimer cette incorporation et ses formations ?')) return;
-    db.filter('formations', (f) => f.incorporationId === id).forEach((f) => db.remove('formations', f.id));
-    db.remove('incorporations', id);
+    if (!(await confirmModal('Supprimer cette incorporation et ses formations ?', { confirmLabel: 'Supprimer', danger: true }))) return;
+    try {
+      for (const f of db.filter('formations', (g) => g.incorporationId === id)) {
+        await db.remove('formations', f.id);
+      }
+      await db.remove('incorporations', id);
+      toast('Incorporation supprimée ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="formation-add"]')) {
     const incoId = e.target.closest('[data-action="formation-add"]').getAttribute('data-inco');
-    const code = prompt('Code de la formation (ex: AUTO)');
-    if (!code) return;
-    const name = prompt('Nom complet ?'); if (!name) return;
-    const duration = prompt('Durée ?', '3 mois'); if (!duration) return;
-    const capacity = parseInt(prompt('Capacité ?', '12'), 10) || 12;
-    db.insert('formations', { incorporationId: incoId, code, name, duration, capacity });
+    const r = await inputModal({
+      title: 'Nouvelle formation',
+      fields: [
+        { name: 'code', label: 'Code (ex. AUTO, MECA)', required: true },
+        { name: 'name', label: 'Nom complet', required: true },
+        { name: 'duration', label: 'Durée', value: '3 mois' },
+        { name: 'capacity', label: 'Capacité', type: 'number', value: 12 },
+      ],
+      submitLabel: 'Créer',
+    });
+    if (!r) return;
+    try {
+      await db.insert('formations', { incorporationId: incoId, code: r.code, name: r.name, duration: r.duration, capacity: r.capacity || 12 });
+      toast('Formation créée ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="formation-edit"]')) {
     const id = e.target.closest('[data-action="formation-edit"]').getAttribute('data-id');
     const f = db.byId('formations', id);
-    const name = prompt('Nom de la formation', f.name); if (!name) return;
-    db.update('formations', id, { name });
+    if (!f) return;
+    const r = await inputModal({
+      title: `Modifier formation`,
+      fields: [
+        { name: 'code', label: 'Code', value: f.code, required: true },
+        { name: 'name', label: 'Nom', value: f.name, required: true },
+        { name: 'duration', label: 'Durée', value: f.duration },
+        { name: 'capacity', label: 'Capacité', type: 'number', value: f.capacity },
+      ],
+      submitLabel: 'Enregistrer',
+    });
+    if (!r) return;
+    try {
+      await db.update('formations', id, r);
+      toast('Formation mise à jour ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
   if (e.target.closest('[data-action="formation-delete"]')) {
     const id = e.target.closest('[data-action="formation-delete"]').getAttribute('data-id');
-    if (!confirm('Supprimer cette formation ?')) return;
-    db.remove('formations', id);
+    if (!(await confirmModal('Supprimer cette formation ?', { confirmLabel: 'Supprimer', danger: true }))) return;
+    try {
+      await db.remove('formations', id);
+      toast('Formation supprimée ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
     return;
   }
 
@@ -1294,13 +1671,13 @@ document.addEventListener('click', async (e) => {
   }
   if (e.target.closest('[data-action="backup-restore"]')) {
     const id = e.target.closest('[data-action="backup-restore"]').getAttribute('data-id');
-    if (!confirm('Restaurer cette sauvegarde ? Un instantané de l\'état actuel sera créé avant.')) return;
+    if (!(await confirmModal('Restaurer cette sauvegarde ? Un instantané de l\'état actuel sera créé avant.'))) return;
     if (restoreBackup(id)) toast('Sauvegarde restaurée');
     return;
   }
   if (e.target.closest('[data-action="backup-delete"]')) {
     const id = e.target.closest('[data-action="backup-delete"]').getAttribute('data-id');
-    if (!confirm('Supprimer cette sauvegarde ?')) return;
+    if (!(await confirmModal('Supprimer cette sauvegarde ?'))) return;
     deleteBackup(id);
     render();
     return;
@@ -1312,11 +1689,176 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  // Reset logo (admin settings)
+  if (e.target.closest('[data-action="logo-reset"]')) {
+    if (!(await confirmModal('Réinitialiser le logo par défaut ?'))) return;
+    await db.setSettings({ logoUrl: '' });
+    updateFavicon();
+    toast('Logo réinitialisé');
+    return;
+  }
+
+  /* ------- SECTIONS (admin) ------- */
+  if (e.target.closest('[data-action="section-add"]')) {
+    const r = await inputModal({
+      title: 'Nouvelle section',
+      fields: [
+        { name: 'code', label: 'Code (ex. S31)', placeholder: 'S31', required: true },
+        { name: 'name', label: 'Nom complet', placeholder: 'Section S31' },
+        { name: 'compagnie', label: 'Compagnie (1, 2, 3...)', type: 'number', value: 1, required: true },
+      ],
+      submitLabel: 'Créer',
+    });
+    if (!r) return;
+    const code = (r.code || '').trim().toUpperCase();
+    if (!code) { toast('Code requis'); return; }
+    if (db.find('sections', (s) => s.code === code)) { toast('Cette section existe déjà'); return; }
+    try {
+      await db.insert('sections', { code, name: r.name || ('Section ' + code), compagnie: r.compagnie, description: r.compagnie + 'ᵉ compagnie' });
+      toast(`Section ${code} créée ✓`);
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="section-edit"]')) {
+    const id = e.target.closest('[data-action="section-edit"]').getAttribute('data-id');
+    const s = db.byId('sections', id);
+    if (!s) return;
+    const r = await inputModal({
+      title: `Modifier ${s.code}`,
+      fields: [
+        { name: 'name', label: 'Nom', value: s.name, required: true },
+        { name: 'compagnie', label: 'Compagnie', type: 'number', value: s.compagnie, required: true },
+      ],
+      submitLabel: 'Enregistrer',
+    });
+    if (!r) return;
+    try {
+      await db.update('sections', id, { name: r.name, compagnie: r.compagnie, description: r.compagnie + 'ᵉ compagnie' });
+      toast('Section mise à jour ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="section-delete"]')) {
+    const id = e.target.closest('[data-action="section-delete"]').getAttribute('data-id');
+    const s = db.byId('sections', id);
+    if (!s) return;
+    const members = db.filter('users', (u) => u.section === s.code);
+    const msg = members.length > 0
+      ? `Cette section a ${members.length} membre(s). En la supprimant, ils seront désaffectés. Continuer ?`
+      : `Supprimer la section ${s.code} ?`;
+    if (!(await confirmModal(msg, { confirmLabel: 'Supprimer', danger: true }))) return;
+    try {
+      for (const m of members) await db.update('users', m.id, { section: null });
+      await db.remove('sections', id);
+      toast('Section supprimée ✓');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+
+  /* ------- AUDIT export ------- */
+  if (e.target.closest('[data-action="audit-export"]')) {
+    const json = JSON.stringify(db.all('auditLog'), null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `audit-mon-smv-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Export téléchargé');
+    return;
+  }
+
   // Publish event
   if (e.target.closest('[data-action="publish-event"]')) {
     document.querySelector('[data-form="event-new"]')?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
     return;
   }
+});
+
+// Preview live du fichier choisi dans le composer (post / story / candidature)
+document.addEventListener('change', (e) => {
+  const inp = e.target.closest('#composer-file, #story-file');
+  if (!inp) return;
+  const file = inp.files?.[0];
+  const preview = document.getElementById('composer-preview');
+  if (!file || !preview) return;
+  const url = URL.createObjectURL(file);
+  preview.innerHTML = file.type.startsWith('video')
+    ? `<video src="${url}" controls playsinline></video>`
+    : `<img src="${url}" alt="aperçu" />`;
+});
+
+// Upload de logo : upload sur Supabase Storage bucket "logos"
+document.addEventListener('change', async (e) => {
+  const upl = e.target.closest('[data-logo-upload]');
+  if (!upl) return;
+  const file = upl.files && upl.files[0];
+  if (!file) return;
+  const MAX = 500 * 1024;
+  if (file.size > MAX) { toast('Image trop grande (max 500 Ko)'); upl.value = ''; return; }
+  toast('Upload du logo…');
+  try {
+    // 1. Upload sur Supabase Storage
+    const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+    const path = `logo-${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('logos').upload(path, file, { upsert: true, contentType: file.type });
+    if (upErr) throw upErr;
+    // 2. Récupérer l'URL publique
+    const { data: pub } = supabase.storage.from('logos').getPublicUrl(path);
+    const url = pub.publicUrl;
+    // 3. Stocker dans les settings
+    await db.setSettings({ logoUrl: url });
+    updateFavicon();
+    toast('Logo mis à jour ✓');
+    const prev = document.getElementById('logo-preview');
+    if (prev) prev.src = url;
+    render();
+  } catch (err) {
+    console.error(err);
+    toast(`Erreur : ${err.message || 'upload impossible'}`);
+  }
+  upl.value = '';
+});
+
+// Recherche social
+document.addEventListener('input', (e) => {
+  const s = e.target.closest('[data-search-input]');
+  if (s) {
+    ui.searchQuery = s.value;
+    render();
+    setTimeout(() => {
+      const newInput = document.querySelector('[data-search-input]');
+      if (newInput) { newInput.focus(); newInput.setSelectionRange(s.value.length, s.value.length); }
+    }, 10);
+    return;
+  }
+});
+
+// Filtres audit log
+document.addEventListener('input', (e) => {
+  const a = e.target.closest('[data-audit-search]');
+  if (a) {
+    ui.auditFilters = { ...(ui.auditFilters || {}), q: a.value };
+    render();
+    // Replace focus on the search field
+    const newInput = document.querySelector('[data-audit-search]');
+    if (newInput) { newInput.focus(); newInput.setSelectionRange(a.value.length, a.value.length); }
+  }
+});
+document.addEventListener('change', async (e) => {
+  // Affectation incorporation d'une candidature
+  const ci = e.target.closest('[data-action="cand-incorporation"]');
+  if (ci) {
+    const id = ci.getAttribute('data-id');
+    try { await db.update('candidatures', id, { incorporation: ci.value || null }); toast('Incorporation mise à jour'); }
+    catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  const cl = e.target.closest('[data-audit-coll]');
+  if (cl) { ui.auditFilters = { ...(ui.auditFilters || {}), coll: cl.value }; render(); return; }
+  const us = e.target.closest('[data-audit-user]');
+  if (us) { ui.auditFilters = { ...(ui.auditFilters || {}), user: us.value }; render(); return; }
 });
 
 // Live binding pour la recherche utilisateurs
@@ -1348,9 +1890,70 @@ document.addEventListener('submit', async (e) => {
   const fd = new FormData(form);
   const data = Object.fromEntries(fd.entries());
 
+  try { await handleSubmit(kind, data, form); }
+  catch (err) {
+    console.error('Form submit error', kind, err);
+    toast(`Erreur : ${err?.message || err}`);
+  }
+});
+
+async function handleSubmit(kind, data, form) {
   switch (kind) {
+    /* ============ RÉSEAU SOCIAL ============ */
+    case 'post-create': {
+      const fileInput = form.querySelector('input[type="file"]');
+      const file = fileInput?.files?.[0];
+      if (!file) { toast('Choisis une photo ou vidéo'); return; }
+      toast('Publication en cours…');
+      const isBereal = form.getAttribute('data-bereal') === '1';
+      await Social.createPost({ file, caption: data.caption, isBereal });
+      toast('Publié ✓');
+      location.hash = '#/feed';
+      break;
+    }
+    case 'story-create': {
+      const fileInput = form.querySelector('input[type="file"]');
+      const file = fileInput?.files?.[0];
+      if (!file) { toast('Choisis une photo ou vidéo'); return; }
+      toast('Upload story…');
+      await Social.createStory({ file });
+      toast('Story publiée pour 24h ✓');
+      location.hash = '#/feed';
+      break;
+    }
+    case 'comment-create': {
+      const postId = form.getAttribute('data-post');
+      await Social.createComment(postId, data.text);
+      form.reset();
+      render();
+      break;
+    }
+    case 'dm-send': {
+      const channel = form.getAttribute('data-channel');
+      await Social.sendDM(channel, data.text);
+      form.reset();
+      render();
+      break;
+    }
+    case 'profile-edit': {
+      const u = currentUser();
+      const patch = {
+        bio: data.bio || null,
+        isPrivate: !!data.isPrivate,
+      };
+      const avatarFile = form.querySelector('input[name="avatar"]')?.files?.[0];
+      if (avatarFile) {
+        const { url } = await Social.uploadMedia(avatarFile, 'avatars');
+        patch.avatarUrl = url;
+      }
+      await db.update('users', u.id, patch);
+      toast('Profil mis à jour ✓');
+      location.hash = '#/profil/' + u.username;
+      break;
+    }
+
     case 'candidature': {
-      db.insert('candidatures', {
+      await db.insert('candidatures', {
         firstName: data.firstName, lastName: data.lastName,
         age: parseInt(data.age, 10), postalCode: data.postalCode,
         goal: data.goal, email: data.email, phone: data.phone,
@@ -1364,9 +1967,14 @@ document.addEventListener('submit', async (e) => {
 
     case 'login': {
       const r = await authLogin(data.username, data.password);
-      if (!r.ok) { ui.loginError = r.error; render(); return; }
+      if (!r.ok) {
+        ui.loginError = r.error;
+        logAction(`Tentative de connexion échouée pour "${data.username}"`, 'session');
+        render(); return;
+      }
       ui.loginError = null;
       const u = r.user;
+      logAction(`Connexion de ${u.firstName} ${u.lastName} (${ROLES_LABELS[u.role]})`, 'session', u.id);
       let to;
       if (r.mustChangePassword) to = '#/auth/changer-mdp';
       else if (canAccessAdmin(u))            to = '#/admin';
@@ -1393,7 +2001,7 @@ document.addEventListener('submit', async (e) => {
 
     case 'note': {
       const u = currentUser();
-      db.insert('notes', { userId: u.id, title: data.title, content: data.content, module: data.module });
+      await db.insert('notes', { userId: u.id, title: data.title, content: data.content, module: data.module });
       toast('Note enregistrée');
       location.hash = '#/notes';
       break;
@@ -1403,7 +2011,7 @@ document.addEventListener('submit', async (e) => {
       const u = currentUser();
       if (!(data.text || '').trim()) return;
       const channel = form.getAttribute('data-channel') || u.section;
-      db.insert('messages', { channel, userId: u.id, text: data.text.trim(), at: new Date().toISOString() });
+      await db.insert('messages', { channel, userId: u.id, text: data.text.trim(), at: new Date().toISOString() });
       form.reset();
       break;
     }
@@ -1417,7 +2025,7 @@ document.addEventListener('submit', async (e) => {
     case 'famille-invite': {
       const u = currentUser();
       const code = genInviteCode();
-      db.insert('invitations', {
+      await db.insert('invitations', {
         jeuneId: u.id, code, relationship: data.relationship, email: data.email || '',
         status: 'pending',
       });
@@ -1438,7 +2046,7 @@ document.addEventListener('submit', async (e) => {
       });
       // remplacer le mot de passe initial par celui choisi
       await changePassword(u.id, data.password);
-      db.update('invitations', inv.id, { status: 'utilisee', usedBy: u.id });
+      await db.update('invitations', inv.id, { status: 'utilisee', usedBy: u.id });
       // login auto
       const r = await authLogin(u.username, data.password);
       ui.banner = null;
@@ -1449,10 +2057,11 @@ document.addEventListener('submit', async (e) => {
     case 'admin-user': {
       const id = form.getAttribute('data-id');
       if (id) {
-        db.update('users', id, {
+        await db.update('users', id, {
           firstName: data.firstName, lastName: data.lastName,
           email: data.email, section: data.section || null,
           role: data.role, incorporation: data.incorporation || null,
+          accountType: data.accountType || 'user',
           active: !!data.active,
         });
         toast('Utilisateur mis à jour');
@@ -1464,6 +2073,9 @@ document.addEventListener('submit', async (e) => {
           section: data.section || null,
           incorporation: data.incorporation || null,
         });
+        if (data.accountType && data.accountType !== 'user') {
+          await db.update('users', u.id, { accountType: data.accountType }, { silent: true });
+        }
         showResetPasswordModal(u, initialPassword);
       }
       break;
@@ -1471,6 +2083,7 @@ document.addEventListener('submit', async (e) => {
 
     case 'admin-settings': {
       const patch = {
+        applicationName: data.applicationName,
         candidatureEmail: data.candidatureEmail,
         candidaturePhone: data.candidaturePhone,
         signalementEmail: data.signalementEmail,
@@ -1489,15 +2102,17 @@ document.addEventListener('submit', async (e) => {
         candidatureButtonLabel: data.candidatureButtonLabel,
         candidatureMessage: data.candidatureMessage,
         rgpdMention: data.rgpdMention,
+        instagramHandle: data.instagramHandle || '',
+        instagramEmbed: data.instagramEmbed || '',
       };
-      db.setSettings(patch);
-      toast('Paramètres enregistrés');
+      await db.setSettings(patch);
+      toast('Paramètres enregistrés ✓');
       break;
     }
 
     case 'inco-edit': {
       const id = form.getAttribute('data-id');
-      db.update('incorporations', id, {
+      await db.update('incorporations', id, {
         label: data.label,
         seats: parseInt(data.seats, 10) || 0,
         open: !!data.open,
@@ -1508,7 +2123,7 @@ document.addEventListener('submit', async (e) => {
 
     case 'event-new': {
       const u = currentUser();
-      db.insert('events', {
+      await db.insert('events', {
         sec: data.sec || u.section,
         day: data.day, time: data.time,
         title: data.title, sub: data.sub || '',
@@ -1519,7 +2134,92 @@ document.addEventListener('submit', async (e) => {
       break;
     }
   }
-});
+}
+
+/* ============================================================
+   Modale "input form" générique (remplace prompt() chains)
+   Usage:
+     const r = await inputModal({
+       title: 'Nouvelle section',
+       fields: [
+         { name: 'code', label: 'Code (ex. S31)', value: '', required: true },
+         { name: 'name', label: 'Nom complet', value: '' },
+         { name: 'compagnie', label: 'Compagnie', type: 'number', value: 1 },
+       ],
+       submitLabel: 'Créer'
+     });
+     // r === null si annulé, sinon r === { code, name, compagnie }
+   ============================================================ */
+function inputModal({ title, fields = [], submitLabel = 'Valider', cancelLabel = 'Annuler' }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal';
+    wrap.innerHTML = `
+      <div class="modal__panel">
+        <div class="modal__head">
+          <div class="modal__title">${escapeHtml(title)}</div>
+          <button class="modal__close" type="button" aria-label="Fermer">${ICONS.close}</button>
+        </div>
+        <form class="modal__body">
+          ${fields.map((f) => `
+            <div class="admin-field">
+              <label class="admin-field__label">${escapeHtml(f.label)}${f.required ? ' *' : ''}</label>
+              ${f.type === 'select'
+                ? `<select class="admin-field__select" name="${f.name}" ${f.required ? 'required' : ''}>
+                     ${(f.options || []).map((o) => `<option value="${escapeHtml(o.value)}" ${o.value === f.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+                   </select>`
+                : f.type === 'textarea'
+                ? `<textarea class="admin-field__textarea" name="${f.name}" ${f.required ? 'required' : ''}>${escapeHtml(f.value ?? '')}</textarea>`
+                : `<input class="admin-field__input" name="${f.name}" type="${f.type || 'text'}" value="${escapeHtml(f.value ?? '')}" ${f.required ? 'required' : ''} ${f.placeholder ? `placeholder="${escapeHtml(f.placeholder)}"` : ''} />`}
+              ${f.hint ? `<div class="admin-field__hint">${escapeHtml(f.hint)}</div>` : ''}
+            </div>`).join('')}
+          <div class="modal__foot" style="margin-top: 8px;">
+            <button type="button" class="btn btn--ghost-ink btn--sm" data-modal-cancel>${escapeHtml(cancelLabel)}</button>
+            <button type="submit" class="btn btn--navy btn--sm">${escapeHtml(submitLabel)}</button>
+          </div>
+        </form>
+      </div>`;
+    document.body.appendChild(wrap);
+    setTimeout(() => wrap.querySelector('input, select, textarea')?.focus(), 50);
+
+    function close(result) { wrap.remove(); resolve(result); }
+    wrap.addEventListener('click', (ev) => {
+      if (ev.target === wrap) close(null);
+      if (ev.target.closest('.modal__close') || ev.target.closest('[data-modal-cancel]')) close(null);
+    });
+    wrap.querySelector('form').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const result = {};
+      for (const f of fields) {
+        const el = wrap.querySelector(`[name="${f.name}"]`);
+        result[f.name] = f.type === 'number' ? Number(el.value) : el.value;
+      }
+      close(result);
+    });
+  });
+}
+
+async function confirmModal(message, { confirmLabel = 'Confirmer', cancelLabel = 'Annuler', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal';
+    wrap.innerHTML = `
+      <div class="modal__panel" style="max-width: 420px;">
+        <div class="modal__body" style="padding-top: 22px;">
+          <div style="font-size: 15px; line-height: 1.5;">${escapeHtml(message)}</div>
+          <div class="modal__foot" style="margin-top: 16px; padding: 0; border-top: 0;">
+            <button type="button" class="btn btn--ghost-ink btn--sm" data-no>${escapeHtml(cancelLabel)}</button>
+            <button type="button" class="btn ${danger ? 'btn--red' : 'btn--navy'} btn--sm" data-yes>${escapeHtml(confirmLabel)}</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    wrap.addEventListener('click', (ev) => {
+      if (ev.target === wrap || ev.target.closest('[data-no]')) { wrap.remove(); resolve(false); }
+      if (ev.target.closest('[data-yes]')) { wrap.remove(); resolve(true); }
+    });
+  });
+}
 
 /* ============================================================
    Modale réinitialisation / nouveau compte
@@ -1567,19 +2267,68 @@ function showResetPasswordModal(user, password) {
 }
 
 /* ============================================================
+   Favicon dynamique (suit settings.logoUrl)
+   ============================================================ */
+function updateFavicon() {
+  const url = getLogoUrl();
+  let link = document.querySelector('link[rel="icon"]');
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'icon';
+    document.head.appendChild(link);
+  }
+  link.href = url;
+  if (url.startsWith('data:image/svg') || url.endsWith('.svg')) link.type = 'image/svg+xml';
+  else if (url.startsWith('data:image/png') || url.endsWith('.png')) link.type = 'image/png';
+  else if (url.startsWith('data:image/jpeg') || url.endsWith('.jpg') || url.endsWith('.jpeg')) link.type = 'image/jpeg';
+  else link.removeAttribute('type');
+}
+
+/* ============================================================
    BOOT
    ============================================================ */
 async function boot() {
-  await seedIfEmpty();
-  // backup au démarrage si plus d'1h
-  tickAutoBackup();
-  setInterval(tickAutoBackup, 60 * 1000);
-  // Service worker (PWA)
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}));
+  // Loader visuel pendant le chargement initial
+  $app.innerHTML = `
+    <section class="screen screen--dark" style="display: grid; place-items: center; min-height: 100dvh;">
+      <div style="text-align: center; color: var(--white);">
+        <div style="font-family: var(--font-display); font-size: 24px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 8px;">Mon SMV</div>
+        <div style="font-family: var(--font-mono); font-size: 11px; color: rgba(255,255,255,.5); letter-spacing: .12em; text-transform: uppercase;">Chargement…</div>
+      </div>
+    </section>`;
+
+  try {
+    // 1. Bootstrap auth (charge la session si elle existe, charge les données)
+    await initAuth();
+
+    // 2. Seed au tout premier lancement
+    await seedIfEmpty();
+
+    // 3. Mettre à jour le favicon
+    updateFavicon();
+
+    // 4. Réagir aux changements d'auth → re-render
+    onAuthChange(() => { updateFavicon(); render(); });
+    onChange(() => render());
+
+    // 5. Service worker (PWA)
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}));
+    }
+
+    // 6. Route initiale
+    if (!location.hash) location.hash = '#/';
+    render();
+  } catch (e) {
+    console.error('Boot failed:', e);
+    $app.innerHTML = `
+      <section class="screen screen--dark" style="display: grid; place-items: center; min-height: 100dvh; padding: 24px;">
+        <div style="text-align: center; color: var(--white); max-width: 360px;">
+          <div style="font-family: var(--font-display); font-size: 24px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 12px; color: var(--red);">Erreur de chargement</div>
+          <div style="font-family: var(--font-mono); font-size: 12px; color: rgba(255,255,255,.7); line-height: 1.5;">${(e && e.message) || 'Impossible de joindre Supabase'}</div>
+          <button class="btn btn--fluo" style="margin-top: 20px;" onclick="location.reload()">Réessayer</button>
+        </div>
+      </section>`;
   }
-  // route initiale
-  if (!location.hash) location.hash = '#/';
-  render();
 }
 boot();

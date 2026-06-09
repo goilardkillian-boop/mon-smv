@@ -8,7 +8,7 @@
    / canAccessBackups).
    ============================================================ */
 
-import { db, getBackups, restoreBackup, backupNow, deleteBackup } from './db.js';
+import { db, getBackups, restoreBackup, backupNow, deleteBackup, getLogoUrl } from './db.js';
 import {
   createUser, resetPasswordByAdmin, ROLES_LABELS, RELATIONSHIPS,
   canAccessAdmin, canAccessBackups, canAccessRecrutement, slug,
@@ -17,25 +17,37 @@ import { ICONS } from './icons.js';
 
 /* ---------- Helpers de présentation ---------- */
 function initials(f = '', l = '') { return ((f[0] || '') + (l[0] || '')).toUpperCase(); }
+function escapeAttr(s) { return (s ?? '').toString().replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
 function fmtDate(iso) { if (!iso) return '—'; const d = new Date(iso); return d.toLocaleDateString('fr-FR'); }
 function fmtDateTime(iso) { if (!iso) return '—'; const d = new Date(iso); return d.toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
 function tag(label, cls = 'grey') { return `<span class="tag tag--${cls}">${label}</span>`; }
 
+export function adminNavItems(user) {
+  return [
+    ['admin',                  'Tableau',     ICONS.home,        canAccessAdmin(user)],
+    ['admin/utilisateurs',     'Utilisateurs',ICONS.users,       canAccessAdmin(user)],
+    ['admin/candidatures',     'Candidatures',ICONS.send,        canAccessAdmin(user) || canAccessRecrutement(user)],
+    ['admin/articles',         'Articles',    ICONS.book,        canAccessAdmin(user)],
+    ['admin/sections',         'Sections',    ICONS.shieldFull,  canAccessAdmin(user)],
+    ['admin/familles',         'Familles',    ICONS.users,       canAccessAdmin(user)],
+    ['recrutement',            'Recrutement', ICONS.graduation,  canAccessRecrutement(user)],
+    ['admin/parametres',       'Paramètres',  ICONS.cog,         canAccessAdmin(user)],
+    ['admin/audit',            'Audit',       ICONS.history,     canAccessAdmin(user)],
+    ['fondateur/sauvegardes',  'Sauvegardes', ICONS.database,    canAccessBackups(user)],
+  ].filter((x) => x[3]);
+}
+
 function adminHeader(active, user) {
-  const nav = [
-    ['admin',                'Tableau de bord', canAccessAdmin(user)],
-    ['admin/utilisateurs',   'Utilisateurs',    canAccessAdmin(user)],
-    ['admin/candidatures',   'Candidatures',    canAccessAdmin(user) || canAccessRecrutement(user)],
-    ['admin/familles',       'Familles',        canAccessAdmin(user)],
-    ['recrutement',          'Recrutement',     canAccessRecrutement(user)],
-    ['admin/parametres',     'Paramètres',      canAccessAdmin(user)],
-    ['admin/audit',          'Audit',           canAccessAdmin(user)],
-    ['fondateur/sauvegardes','Sauvegardes',     canAccessBackups(user)],
-  ].filter(([,,ok]) => ok);
+  const nav = adminNavItems(user);
   return `
     <header class="admin-header">
-      <img class="admin-header__logo" src="./assets/img/logo.svg" alt="" />
-      <div class="admin-header__brand">Mon SMV<small>panel · 3ᵉ RSMV</small></div>
+      <button class="admin-header__burger" data-action="admin-burger" aria-label="Menu">
+        <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round">
+          <line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>
+        </svg>
+      </button>
+      <img class="admin-header__logo" src="${getLogoUrl()}" alt="" />
+      <div class="admin-header__brand">${db.getSettings().applicationName || 'Mon SMV'}<small>panel · 3ᵉ RSMV</small></div>
       <nav class="admin-header__nav">
         ${nav.map(([slug, label]) => `<a href="#/${slug}" class="${active === slug ? 'is-active' : ''}">${label}</a>`).join('')}
       </nav>
@@ -44,7 +56,13 @@ function adminHeader(active, user) {
         <span>${user.firstName} · ${ROLES_LABELS[user.role]}</span>
         <button class="admin-header__logout" data-action="logout" aria-label="Déconnexion">${ICONS.logout}</button>
       </div>
-    </header>`;
+    </header>
+    <div class="admin-drawer" data-admin-drawer>
+      <div class="admin-drawer__panel" onclick="event.stopPropagation()">
+        ${nav.map(([slug, label, icon]) => `<a href="#/${slug}" class="${active === slug ? 'is-active' : ''}" data-action="admin-drawer-close">${icon}<span>${label}</span></a>`).join('')}
+        <button class="admin-drawer__close" data-action="logout">${ICONS.logout}<span>Déconnexion</span></button>
+      </div>
+    </div>`;
 }
 
 function shell(active, user, body) {
@@ -68,6 +86,11 @@ export function adminDashboard(user) {
   return shell('admin', user, `
     <h1 class="admin-h1">Tableau de <em>bord</em></h1>
     <p class="admin-sub">${db.getSettings().centreNom}</p>
+
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px;">
+      <a class="btn btn--ghost-ink btn--sm" href="#/feed">${ICONS.home}<span>Voir le feed</span></a>
+      <button class="btn btn--fluo btn--sm" data-action="bereal-trigger">⏱<span>Déclencher BeReal · 2 min</span></button>
+    </div>
 
     <div class="admin-grid">
       <div class="admin-kpi">
@@ -211,13 +234,23 @@ export function adminUserForm(user, idOrNew, form = null) {
             </select>
             <div class="admin-field__hint">Les comptes "famille" sont créés sur invitation par le jeune.</div>
           </div>
-          <div class="admin-field" data-section-wrap>
-            <label class="admin-field__label">Section</label>
-            <select class="admin-field__select" name="section">
-              <option value="">—</option>
-              ${['S11','S12','S13','S21','S22','S23'].map((s) => `<option value="${s}" ${f.section === s ? 'selected' : ''}>${s}</option>`).join('')}
+          <div class="admin-field">
+            <label class="admin-field__label">Type de compte</label>
+            <select class="admin-field__select" name="accountType">
+              <option value="user" ${f.accountType === 'user' || !f.accountType ? 'selected' : ''}>Utilisateur normal</option>
+              <option value="section" ${f.accountType === 'section' ? 'selected' : ''}>Compte de section (COM)</option>
+              <option value="com" ${f.accountType === 'com' ? 'selected' : ''}>Cellule communication</option>
+              <option value="official" ${f.accountType === 'official' ? 'selected' : ''}>Compte officiel</option>
             </select>
+            <div class="admin-field__hint">Les comptes "section" / "COM" peuvent publier au nom du régiment.</div>
           </div>
+        </div>
+        <div class="admin-field" data-section-wrap>
+          <label class="admin-field__label">Section</label>
+          <select class="admin-field__select" name="section">
+            <option value="">—</option>
+            ${['S11','S12','S13','S21','S22','S23'].map((s) => `<option value="${s}" ${f.section === s ? 'selected' : ''}>${s}</option>`).join('')}
+          </select>
         </div>
 
         <div class="admin-field--row">
@@ -280,12 +313,11 @@ export function adminCandidatures(user) {
               <td>${c.postalCode}</td>
               <td>${c.goal}</td>
               <td>${c.email}<br><span class="muted" style="font-size:11px">${c.phone}</span></td>
-              <td>${tag(c.status || 'nouveau', c.status === 'traitee' ? 'green' : c.status === 'rejetee' ? 'red' : 'orange')}</td>
+              <td>${tag(c.status || 'nouveau', c.status === 'accepte' || c.status === 'inscrit' ? 'green' : c.status === 'rejete' || c.status === 'desiste' ? 'red' : c.status && c.status !== 'nouveau' ? 'navy' : 'orange')}</td>
               <td>
                 <div class="admin-table__actions">
+                  <button data-link="#/admin/candidatures/${c.id}" title="Suivi du dossier">${ICONS.eye}</button>
                   <button data-action="cand-promote" data-id="${c.id}" title="Pré-inscrire">${ICONS.plus}</button>
-                  <button data-action="cand-accept" data-id="${c.id}" title="Marquer traitée">${ICONS.check}</button>
-                  <button data-action="cand-reject" data-id="${c.id}" title="Rejeter" class="danger">${ICONS.close}</button>
                 </div>
               </td>
             </tr>`).join('')}
@@ -370,6 +402,25 @@ export function adminSettings(user) {
 
     <form data-form="admin-settings">
       <div class="admin-card">
+        <div class="admin-card__head"><h2 class="admin-card__title">Identité visuelle</h2></div>
+        <div style="display: grid; grid-template-columns: 80px 1fr; gap: 16px; align-items: center; margin-bottom: 16px;">
+          <div style="width: 80px; height: 80px; border-radius: 16px; background: var(--bg-soft); display: grid; place-items: center; overflow: hidden; border: 1.5px solid var(--bg-stroke);">
+            <img src="${getLogoUrl()}" alt="Logo actuel" style="max-width: 100%; max-height: 100%; object-fit: contain;" id="logo-preview" />
+          </div>
+          <div>
+            <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" data-logo-upload id="logo-upload" style="display: none;" />
+            <button type="button" class="btn btn--ghost-ink btn--sm" onclick="document.getElementById('logo-upload').click()">${ICONS.upload}<span>Téléverser un logo</span></button>
+            ${s.logoUrl ? `<button type="button" class="btn btn--ghost-ink btn--sm" data-action="logo-reset" style="margin-left: 8px">${ICONS.refresh}<span>Réinitialiser</span></button>` : ''}
+            <div class="admin-field__hint" style="margin-top: 8px">PNG, JPG, SVG ou WebP. Taille max ~500 Ko. Sera utilisé partout : onboarding, header admin, favicon.</div>
+          </div>
+        </div>
+        <div class="admin-field">
+          <label class="admin-field__label">Nom de l'application</label>
+          <input class="admin-field__input" name="applicationName" value="${escapeAttr(s.applicationName || 'Mon SMV')}" />
+        </div>
+      </div>
+
+      <div class="admin-card">
         <div class="admin-card__head"><h2 class="admin-card__title">Routage des contacts</h2></div>
         <div class="admin-field--row">
           <div class="admin-field">
@@ -426,6 +477,20 @@ export function adminSettings(user) {
       </div>
 
       <div class="admin-card">
+        <div class="admin-card__head"><h2 class="admin-card__title">Feed Instagram (affiché sur l'accueil)</h2></div>
+        <div class="admin-field">
+          <label class="admin-field__label">Pseudo Instagram (@…)</label>
+          <input class="admin-field__input" name="instagramHandle" value="${escapeAttr(s.instagramHandle || '')}" placeholder="3rsmv_officiel" />
+          <div class="admin-field__hint">Sans le @. Affichera une tuile cliquable vers le profil.</div>
+        </div>
+        <div class="admin-field">
+          <label class="admin-field__label">Code embed Instagram (optionnel, prioritaire)</label>
+          <textarea class="admin-field__textarea" name="instagramEmbed" placeholder="&lt;iframe src=&quot;...&quot; ...&gt;&lt;/iframe&gt;">${escapeAttr(s.instagramEmbed || '')}</textarea>
+          <div class="admin-field__hint">Colle ici un code &lt;iframe&gt; (depuis lightwidget.com, embedsocial, ou Instagram). Si rempli, remplace la tuile par le feed embarqué.</div>
+        </div>
+      </div>
+
+      <div class="admin-card">
         <div class="admin-card__head"><h2 class="admin-card__title">Textes éditoriaux</h2></div>
         <div class="admin-field">
           <label class="admin-field__label">Titre de l'onboarding</label>
@@ -457,26 +522,59 @@ export function adminSettings(user) {
 }
 
 /* ============================================================
-   ADMIN · Audit log
+   ADMIN · Audit log (qui a fait quoi à quel moment)
    ============================================================ */
-export function adminAudit(user) {
-  const logs = db.all('auditLog').slice(0, 200);
+export function adminAudit(user, filters = {}) {
+  let logs = db.all('auditLog');
+  if (filters.coll && filters.coll !== 'tout') logs = logs.filter((l) => l.coll === filters.coll);
+  if (filters.user) logs = logs.filter((l) => l.by === filters.user);
+  if (filters.q) {
+    const q = filters.q.toLowerCase();
+    logs = logs.filter((l) => (l.description || '').toLowerCase().includes(q) || (l.entityId || '').toLowerCase().includes(q));
+  }
+  logs = logs.slice(0, 300);
+
+  const collOptions = [...new Set(db.all('auditLog').map((l) => l.coll))];
+  const userOptions = [...new Set(db.all('auditLog').map((l) => l.by).filter(Boolean))];
+
   return shell('admin/audit', user, `
-    <h1 class="admin-h1">Journal d'<em>audit</em></h1>
-    <p class="admin-sub">200 dernières écritures · permet de retracer toute modification.</p>
+    <div class="row-between mb-4">
+      <h1 class="admin-h1">Journal d'<em>activité</em></h1>
+      <button class="btn btn--ghost-ink btn--sm" data-action="audit-export">${ICONS.download}<span>Export JSON</span></button>
+    </div>
+    <p class="admin-sub">Qui a fait quoi, à quel moment. 500 dernières écritures conservées.</p>
+
+    <div class="admin-toolbar">
+      <input class="admin-toolbar__search" placeholder="Rechercher dans la description ou l'ID…" data-audit-search value="${escapeAttr(filters.q || '')}" />
+      <select class="admin-field__select" data-audit-coll style="max-width: 180px">
+        <option value="tout">Toutes les collections</option>
+        ${collOptions.map((c) => `<option value="${c}" ${filters.coll === c ? 'selected' : ''}>${c}</option>`).join('')}
+      </select>
+      <select class="admin-field__select" data-audit-user style="max-width: 180px">
+        <option value="">Tous les utilisateurs</option>
+        ${userOptions.map((id) => {
+          const u = db.byId('users', id);
+          return u ? `<option value="${id}" ${filters.user === id ? 'selected' : ''}>${u.firstName} ${u.lastName}</option>` : '';
+        }).join('')}
+      </select>
+      <span class="muted" style="font-size: 12px">${logs.length} résultat${logs.length > 1 ? 's' : ''}</span>
+    </div>
+
     <div class="admin-table-wrap">
       <table class="admin-table">
-        <thead><tr><th>Quand</th><th>Par</th><th>Collection</th><th>Action</th><th>Entité</th></tr></thead>
+        <thead><tr><th>Quand</th><th>Par</th><th>Description</th><th>Type</th><th>ID</th></tr></thead>
         <tbody>
-          ${logs.length === 0 ? `<tr><td colspan="5" style="text-align:center; padding: 32px; color: var(--ink-500);">Journal vide.</td></tr>` : ''}
+          ${logs.length === 0 ? `<tr><td colspan="5" style="text-align:center; padding: 32px; color: var(--ink-500);">Aucune entrée.</td></tr>` : ''}
           ${logs.map((l) => {
             const by = l.by ? db.byId('users', l.by) : null;
             return `<tr>
-              <td style="font-family: var(--font-mono); font-size: 11px">${fmtDateTime(l.at)}</td>
-              <td>${by ? by.firstName + ' ' + by.lastName : '<span class="muted">système</span>'}</td>
-              <td>${tag(l.coll, 'navy')}</td>
-              <td>${tag(l.action, l.action === 'remove' ? 'red' : l.action === 'insert' ? 'green' : 'orange')}</td>
-              <td><code style="font-family: var(--font-mono); font-size: 11px">${l.entityId || '—'}</code></td>
+              <td style="font-family: var(--font-mono); font-size: 11px; white-space: nowrap">${fmtDateTime(l.at)}</td>
+              <td>
+                ${by ? `<span style="display: inline-flex; align-items: center; gap: 6px"><span class="msg__avatar" style="width: 22px; height: 22px; font-size: 9px">${initials(by.firstName, by.lastName)}</span>${by.firstName} ${by.lastName} <span class="muted" style="font-size: 11px">· ${ROLES_LABELS[by.role] || by.role}</span></span>` : '<span class="muted">système</span>'}
+              </td>
+              <td>${escapeAttr(l.description || `${l.action} ${l.coll}`)}</td>
+              <td>${tag(l.coll, 'navy')} ${tag(l.action, l.action === 'remove' ? 'red' : l.action === 'insert' ? 'green' : l.action === 'event' ? 'fluo' : 'orange')}</td>
+              <td><code style="font-family: var(--font-mono); font-size: 10px; color: var(--ink-500)">${l.entityId || '—'}</code></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -492,15 +590,53 @@ export function recrutementDashboard(user) {
   const incos = db.all('incorporations');
   const formations = db.all('formations');
   const cands = db.all('candidatures');
+  const newCands = cands.filter((c) => c.status === 'nouveau' || !c.status);
   return shell('recrutement', user, `
     <h1 class="admin-h1">Cellule <em>recrutement</em></h1>
     <p class="admin-sub">Gestion des incorporations (tous les 2 mois) et des formations proposées.</p>
 
     <div class="admin-grid">
-      <div class="admin-kpi"><div class="admin-kpi__lbl">Incorporations planifiées</div><div class="admin-kpi__num admin-kpi__num--fluo">${incos.length}</div><div class="admin-kpi__hint">${incos.filter((i) => i.open).length} ouvertes</div></div>
-      <div class="admin-kpi"><div class="admin-kpi__lbl">Formations proposées</div><div class="admin-kpi__num">${formations.length}</div><div class="admin-kpi__hint">toutes incorporations confondues</div></div>
-      <div class="admin-kpi"><div class="admin-kpi__lbl">Candidatures à traiter</div><div class="admin-kpi__num admin-kpi__num--red">${cands.filter((c) => c.status === 'nouveau' || !c.status).length}</div><div class="admin-kpi__hint">${cands.length} au total</div></div>
+      <a class="admin-kpi" href="#/recrutement" style="text-decoration:none; color:inherit">
+        <div class="admin-kpi__lbl">Incorporations planifiées</div>
+        <div class="admin-kpi__num admin-kpi__num--fluo">${incos.length}</div>
+        <div class="admin-kpi__hint">${incos.filter((i) => i.open).length} ouvertes</div>
+      </a>
+      <a class="admin-kpi" href="#/recrutement" style="text-decoration:none; color:inherit">
+        <div class="admin-kpi__lbl">Formations proposées</div>
+        <div class="admin-kpi__num">${formations.length}</div>
+        <div class="admin-kpi__hint">toutes incorporations confondues</div>
+      </a>
+      <a class="admin-kpi" href="#/admin/candidatures" style="text-decoration:none; color:inherit; ${newCands.length > 0 ? 'border-color: var(--red);' : ''}">
+        <div class="admin-kpi__lbl">Candidatures à traiter</div>
+        <div class="admin-kpi__num ${newCands.length > 0 ? 'admin-kpi__num--red' : ''}">${newCands.length}</div>
+        <div class="admin-kpi__hint">${cands.length} au total · cliquer pour voir</div>
+      </a>
     </div>
+
+    ${newCands.length > 0 ? `
+      <div class="admin-card">
+        <div class="admin-card__head">
+          <h2 class="admin-card__title">Dernières candidatures · à traiter</h2>
+          <a href="#/admin/candidatures" class="btn btn--ghost-ink btn--sm">Voir toutes</a>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Reçue</th><th>Nom</th><th>Âge</th><th>Recherche</th><th></th></tr></thead>
+            <tbody>
+              ${newCands.slice(0, 5).map((c) => `
+                <tr>
+                  <td style="font-family: var(--font-mono); font-size: 11px">${fmtDateTime(c.createdAt)}</td>
+                  <td>${escapeAttr(c.firstName)} ${escapeAttr(c.lastName)}</td>
+                  <td>${c.age}</td>
+                  <td>${escapeAttr(c.goal)}</td>
+                  <td><div class="admin-table__actions">
+                    <button data-action="cand-promote" data-id="${c.id}" title="Pré-inscrire">${ICONS.plus}</button>
+                  </div></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>` : ''}
 
     <div class="admin-card">
       <div class="admin-card__head">
@@ -620,5 +756,193 @@ export function fondateurBackups(user) {
         <button class="backup-row__btn backup-row__btn--restore" data-action="backup-restore" data-id="${b.id}">${ICONS.refresh}<span> Restaurer</span></button>
         <button class="backup-row__btn backup-row__btn--delete" data-action="backup-delete" data-id="${b.id}" title="Supprimer">${ICONS.trash}</button>
       </div>`).join('')}
+  `);
+}
+
+/* ============================================================
+   ADMIN · Sections & compagnies
+   ============================================================ */
+export function adminSections(user) {
+  const sections = db.all('sections').sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+  const compagnies = [...new Set(sections.map((s) => s.compagnie))].sort();
+  const members = db.all('users');
+  return shell('admin/sections', user, `
+    <div class="row-between mb-4">
+      <h1 class="admin-h1">Sections & <em>compagnies</em></h1>
+      <button class="btn btn--navy" data-action="section-add">${ICONS.plus}<span>Nouvelle section</span></button>
+    </div>
+    <p class="admin-sub">Crée, modifie et supprime les sections. Une section appartient à une compagnie (1ʳᵉ, 2ᵉ, etc.).</p>
+
+    <div class="admin-grid">
+      <div class="admin-kpi"><div class="admin-kpi__lbl">Sections</div><div class="admin-kpi__num">${sections.length}</div><div class="admin-kpi__hint">${compagnies.length} compagnie${compagnies.length > 1 ? 's' : ''}</div></div>
+      <div class="admin-kpi"><div class="admin-kpi__lbl">Volontaires affectés</div><div class="admin-kpi__num admin-kpi__num--fluo">${members.filter((u) => u.role === 'jeune' && u.section).length}</div><div class="admin-kpi__hint">sur ${members.filter((u) => u.role === 'jeune').length}</div></div>
+      <div class="admin-kpi"><div class="admin-kpi__lbl">Cadres rattachés</div><div class="admin-kpi__num">${members.filter((u) => u.role === 'cadre' && u.section).length}</div></div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card__head"><h2 class="admin-card__title">Toutes les sections</h2></div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Code</th><th>Nom</th><th>Compagnie</th><th>Cadres</th><th>Volontaires</th><th></th></tr></thead>
+          <tbody>
+            ${sections.length === 0 ? `<tr><td colspan="6" style="text-align:center; padding: 24px; color: var(--ink-500);">Aucune section. Crée-en une avec le bouton +.</td></tr>` : ''}
+            ${sections.map((s) => {
+              const cadres = members.filter((u) => u.role === 'cadre' && u.section === s.code).length;
+              const jeunes = members.filter((u) => u.role === 'jeune' && u.section === s.code).length;
+              return `<tr>
+                <td><code style="font-family: var(--font-mono); font-weight: 700">${s.code}</code></td>
+                <td>${escapeAttr(s.name || s.code)}</td>
+                <td>${tag(s.compagnie + 'ᵉ compagnie', 'navy')}</td>
+                <td>${cadres}</td>
+                <td>${jeunes}</td>
+                <td>
+                  <div class="admin-table__actions">
+                    <button data-action="section-edit" data-id="${s.id}" title="Modifier">${ICONS.edit}</button>
+                    <button data-action="section-delete" data-id="${s.id}" title="Supprimer" class="danger">${ICONS.trash}</button>
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card__head">
+        <h2 class="admin-card__title">Compagnies (${compagnies.length})</h2>
+      </div>
+      <p class="muted" style="font-size: 13px; margin-bottom: 12px">
+        Les compagnies sont déduites des sections. Pour créer une nouvelle compagnie, crée une section avec un numéro de compagnie qui n'existe pas encore.
+      </p>
+      <div class="admin-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr))">
+        ${compagnies.map((c) => {
+          const inSecs = sections.filter((s) => s.compagnie === c);
+          return `<div class="admin-kpi">
+            <div class="admin-kpi__lbl">${c}ᵉ compagnie</div>
+            <div class="admin-kpi__num">${inSecs.length}</div>
+            <div class="admin-kpi__hint">${inSecs.map((x) => x.code).join(' · ')}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `);
+}
+
+/* ============================================================
+   ADMIN · Articles (news CRUD)
+   ============================================================ */
+export function adminArticles(user) {
+  const articles = db.all('news').sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  return shell('admin/articles', user, `
+    <div class="row-between mb-4">
+      <h1 class="admin-h1">Articles & <em>actualités</em></h1>
+      <button class="btn btn--navy" data-action="article-add">${ICONS.plus}<span>Nouvel article</span></button>
+    </div>
+    <p class="admin-sub">Les articles publiés apparaissent sur l'accueil des volontaires + la page Découvrir publique.</p>
+
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Date</th><th>Titre</th><th>Extrait</th><th>Statut</th><th></th></tr></thead>
+        <tbody>
+          ${articles.length === 0 ? `<tr><td colspan="5" style="text-align:center; padding: 24px; color: var(--ink-500);">Aucun article. Crée-en un avec le bouton +.</td></tr>` : ''}
+          ${articles.map((n) => `
+            <tr>
+              <td style="font-family: var(--font-mono); font-size: 11px">${escapeAttr(n.date || '—')}</td>
+              <td><strong>${escapeAttr(n.title)}</strong></td>
+              <td style="color: var(--ink-500); font-size: 12px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${escapeAttr(n.excerpt || '')}</td>
+              <td>${n.published ? tag('publié', 'green') : tag('brouillon', 'grey')}</td>
+              <td><div class="admin-table__actions">
+                <button data-action="article-edit" data-id="${n.id}">${ICONS.edit}</button>
+                <button data-action="article-toggle" data-id="${n.id}" title="${n.published ? 'Dépublier' : 'Publier'}">${n.published ? ICONS.eyeOff : ICONS.eye}</button>
+                <button data-action="article-delete" data-id="${n.id}" class="danger">${ICONS.trash}</button>
+              </div></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `);
+}
+
+/* ============================================================
+   RECRUTEMENT · Détail candidature avec workflow
+   ============================================================ */
+export function recrutementCandidature(user, id) {
+  const c = db.byId('candidatures', id);
+  if (!c) return shell('admin/candidatures', user, `<p>Candidature introuvable.</p>`);
+  const incos = db.all('incorporations');
+  const linked = c.linkedUserId ? db.byId('users', c.linkedUserId) : null;
+  const STATUS_FLOW = [
+    { value: 'nouveau',   label: 'Nouveau',          color: 'orange' },
+    { value: 'contacte',  label: 'Contact pris',     color: 'navy' },
+    { value: 'entretien', label: 'Entretien planifié',color: 'navy' },
+    { value: 'visite',    label: 'Visite régiment',  color: 'navy' },
+    { value: 'accepte',   label: 'Accepté',          color: 'green' },
+    { value: 'inscrit',   label: 'Inscrit',          color: 'fluo' },
+    { value: 'rejete',    label: 'Rejeté',           color: 'red' },
+    { value: 'desiste',   label: 'Désisté',          color: 'grey' },
+  ];
+  return shell('admin/candidatures', user, `
+    <div class="row-between mb-4">
+      <div>
+        <h1 class="admin-h1">${escapeAttr(c.firstName)} ${escapeAttr(c.lastName)}</h1>
+        <p class="admin-sub">${c.age} ans · ${escapeAttr(c.postalCode || '')} · reçue le ${fmtDateTime(c.createdAt)}</p>
+      </div>
+      <button class="btn btn--ghost-ink" data-link="#/admin/candidatures">Retour</button>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card__head"><h2 class="admin-card__title">Suivi du dossier</h2></div>
+      <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;">
+        ${STATUS_FLOW.map((s) => `
+          <button class="btn ${c.status === s.value ? 'btn--navy' : 'btn--ghost-ink'} btn--sm" data-action="cand-status" data-id="${c.id}" data-status="${s.value}">${s.label}</button>
+        `).join('')}
+      </div>
+      <div class="admin-field">
+        <label class="admin-field__label">Affecter à une incorporation</label>
+        <select class="admin-field__select" data-action="cand-incorporation" data-id="${c.id}">
+          <option value="">—</option>
+          ${incos.map((i) => `<option value="${i.slug}" ${c.incorporation === i.slug ? 'selected' : ''}>${i.label}</option>`).join('')}
+        </select>
+      </div>
+      <div class="admin-field">
+        <label class="admin-field__label">Notes internes (RGPD : visible uniquement par admin/mod/recrutement)</label>
+        <textarea class="admin-field__textarea" data-cand-notes data-id="${c.id}" placeholder="Notes d'entretien, retours, points d'attention…">${escapeAttr(c.notes || '')}</textarea>
+        <button class="btn btn--ghost-ink btn--sm" style="margin-top: 8px" data-action="cand-save-notes" data-id="${c.id}">${ICONS.check}<span>Enregistrer les notes</span></button>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card__head"><h2 class="admin-card__title">Coordonnées</h2></div>
+      <div class="admin-field--row">
+        <div class="admin-field">
+          <label class="admin-field__label">Email</label>
+          <input class="admin-field__input" value="${escapeAttr(c.email || '')}" readonly />
+        </div>
+        <div class="admin-field">
+          <label class="admin-field__label">Téléphone</label>
+          <input class="admin-field__input" value="${escapeAttr(c.phone || '')}" readonly />
+        </div>
+      </div>
+      <div class="admin-field">
+        <label class="admin-field__label">Recherche</label>
+        <input class="admin-field__input" value="${escapeAttr(c.goal || '')}" readonly />
+      </div>
+      <div style="display:flex; gap: 8px; margin-top: 12px;">
+        <a class="btn btn--ghost-ink btn--sm" href="mailto:${escapeAttr(c.email || '')}">${ICONS.send}<span>Envoyer un email</span></a>
+        <a class="btn btn--ghost-ink btn--sm" href="tel:${escapeAttr((c.phone || '').replace(/\s/g, ''))}">${ICONS.user}<span>Appeler</span></a>
+      </div>
+    </div>
+
+    ${linked ? `
+      <div class="admin-card">
+        <div class="admin-card__head"><h2 class="admin-card__title">Compte volontaire créé</h2></div>
+        <p>Compte <code>@${linked.username}</code> · ${ROLES_LABELS[linked.role]} · ${linked.section || '—'}</p>
+      </div>` : `
+      <div class="admin-card">
+        <div class="admin-card__head"><h2 class="admin-card__title">Pré-inscription</h2></div>
+        <p class="muted">Quand la candidature est acceptée, tu peux créer son compte volontaire en un clic.</p>
+        <button class="btn btn--fluo" data-action="cand-promote" data-id="${c.id}">${ICONS.plus}<span>Créer le compte jeune</span></button>
+      </div>`}
   `);
 }
