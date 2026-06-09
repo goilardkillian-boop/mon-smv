@@ -2,7 +2,7 @@
    Mon SMV · Service Worker · stale-while-revalidate pour les assets statiques.
    On ne cache PAS les appels Supabase (toujours en réseau).
    ============================================================ */
-const VERSION = 'mon-smv-v8';
+const VERSION = 'mon-smv-v10';
 const CORE = [
   './',
   './index.html',
@@ -15,6 +15,7 @@ const CORE = [
   './assets/seed.js',
   './assets/supabase-client.js',
   './assets/screens-admin.js',
+  './assets/social.js',
   './assets/img/logo.svg',
   './assets/img/blob-fluo.svg',
   './assets/img/blob-dots.svg',

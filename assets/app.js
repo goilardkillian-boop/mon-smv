@@ -22,6 +22,7 @@ import {
 import { seedIfEmpty } from './seed.js';
 import { supabase } from './supabase-client.js';
 import * as Admin from './screens-admin.js';
+import * as Social from './social.js';
 
 /* ----------------------------------------------------------
    UI state éphémère (filtres, brouillons)
@@ -1175,12 +1176,10 @@ function resolve() {
 
   // Connecté
   if (route === '' || route === 'connexion') {
-    // routage par défaut selon le rôle
-    if (canAccessAdmin(user) && !['cadre'].includes(user.role)) location.hash = '#/admin';
+    // Par défaut, après login : tout le monde sur le feed social
+    if (canAccessAdmin(user) && user.role !== 'cadre' && user.role !== 'jeune') location.hash = '#/admin';
     else if (user.role === 'recrutement') location.hash = '#/recrutement';
-    else if (user.role === 'cadre') location.hash = '#/pilote';
-    else if (user.role === 'famille') location.hash = '#/famille/photos';
-    else location.hash = '#/accueil';
+    else location.hash = '#/feed';
     return resolve();
   }
 
@@ -1191,6 +1190,18 @@ function resolve() {
   if (route === 'galerie')     return screenGalerie();
   if (route === 'visite')      return screenVisite();
   if (route === 'candidature') return screenCandidature();
+
+  // ===== Routes réseau social =====
+  if (route === 'feed') return Social.feedScreen();
+  if (route === 'recherche') return Social.searchScreen(ui.searchQuery || '');
+  if (route === 'composer') return Social.composerScreen(false);
+  if (route === 'composer/bereal') return Social.composerScreen(true);
+  if (route === 'dm') return Social.dmListScreen();
+  if (route.startsWith('dm/')) return Social.dmConvScreen(route.split('/')[1]);
+  if (route.startsWith('post/')) return Social.postDetailScreen(route.split('/')[1]);
+  if (route.startsWith('profil/')) return Social.profileScreen(route.split('/')[1]);
+  if (route.startsWith('story/')) return Social.storyScreen(route.split('/')[1]);
+  if (route === 'moi/edit') return Social.moiEditScreen();
 
   // Admin/recrutement/fondateur
   if (isAdminPath(route)) {
@@ -1296,6 +1307,61 @@ document.addEventListener('click', async (e) => {
   if (link) { e.preventDefault(); location.hash = link.getAttribute('data-link'); return; }
 
   if (e.target.closest('[data-action="back"]')) { history.length > 1 ? history.back() : (location.hash = '#/'); return; }
+
+  /* ============ RÉSEAU SOCIAL ============ */
+  if (e.target.closest('[data-action="like"]')) {
+    const btn = e.target.closest('[data-action="like"]');
+    const postId = btn.getAttribute('data-id');
+    try {
+      await Social.toggleLike(postId);
+      render();
+    } catch (err) { toast('Erreur like : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="post-menu"]')) {
+    const btn = e.target.closest('[data-action="post-menu"]');
+    const postId = btn.getAttribute('data-id');
+    const p = db.byId('posts', postId);
+    const me = currentUser();
+    const canDelete = p?.authorId === me.id || ['admin','moderateur','cadre'].includes(me.role);
+    const canHide = ['admin','moderateur','cadre'].includes(me.role);
+    const options = [];
+    if (canDelete) options.push('Supprimer');
+    if (canHide && !p.hidden) options.push('Masquer (modération)');
+    if (options.length === 0) return;
+    const choice = await confirmModal(`Que faire avec ce post ?\n\n${options.join(' · ')}`, { confirmLabel: 'Supprimer', danger: true });
+    if (!choice) return;
+    try {
+      if (canDelete) {
+        await db.remove('posts', postId);
+        toast('Post supprimé');
+        if (location.hash.startsWith('#/post/')) location.hash = '#/feed';
+      }
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="comment-delete"]')) {
+    const id = e.target.closest('[data-action="comment-delete"]').getAttribute('data-id');
+    if (!(await confirmModal('Supprimer ce commentaire ?', { confirmLabel: 'Supprimer', danger: true }))) return;
+    try { await db.remove('comments', id); render(); } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="toggle-privacy"]')) {
+    const me = currentUser();
+    try {
+      await db.update('users', me.id, { isPrivate: !me.isPrivate });
+      toast(me.isPrivate ? 'Profil rendu public 🌍' : 'Profil rendu privé 🔒');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
+  if (e.target.closest('[data-action="bereal-trigger"]')) {
+    if (!(await confirmModal('Déclencher un round BeReal de 2 minutes pour tout le monde ?', { confirmLabel: 'Déclencher' }))) return;
+    try {
+      await Social.triggerBereal(2);
+      toast('BeReal déclenché ⏱ 2 minutes');
+    } catch (err) { toast('Erreur : ' + (err?.message || err)); }
+    return;
+  }
 
   // Burger menu admin (mobile)
   if (e.target.closest('[data-action="admin-burger"]')) {
@@ -1696,6 +1762,19 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// Preview live du fichier choisi dans le composer (post / story / candidature)
+document.addEventListener('change', (e) => {
+  const inp = e.target.closest('#composer-file, #story-file');
+  if (!inp) return;
+  const file = inp.files?.[0];
+  const preview = document.getElementById('composer-preview');
+  if (!file || !preview) return;
+  const url = URL.createObjectURL(file);
+  preview.innerHTML = file.type.startsWith('video')
+    ? `<video src="${url}" controls playsinline></video>`
+    : `<img src="${url}" alt="aperçu" />`;
+});
+
 // Upload de logo : upload sur Supabase Storage bucket "logos"
 document.addEventListener('change', async (e) => {
   const upl = e.target.closest('[data-logo-upload]');
@@ -1726,6 +1805,20 @@ document.addEventListener('change', async (e) => {
     toast(`Erreur : ${err.message || 'upload impossible'}`);
   }
   upl.value = '';
+});
+
+// Recherche social
+document.addEventListener('input', (e) => {
+  const s = e.target.closest('[data-search-input]');
+  if (s) {
+    ui.searchQuery = s.value;
+    render();
+    setTimeout(() => {
+      const newInput = document.querySelector('[data-search-input]');
+      if (newInput) { newInput.focus(); newInput.setSelectionRange(s.value.length, s.value.length); }
+    }, 10);
+    return;
+  }
 });
 
 // Filtres audit log
@@ -1792,6 +1885,59 @@ document.addEventListener('submit', async (e) => {
 
 async function handleSubmit(kind, data, form) {
   switch (kind) {
+    /* ============ RÉSEAU SOCIAL ============ */
+    case 'post-create': {
+      const fileInput = form.querySelector('input[type="file"]');
+      const file = fileInput?.files?.[0];
+      if (!file) { toast('Choisis une photo ou vidéo'); return; }
+      toast('Publication en cours…');
+      const isBereal = form.getAttribute('data-bereal') === '1';
+      await Social.createPost({ file, caption: data.caption, isBereal });
+      toast('Publié ✓');
+      location.hash = '#/feed';
+      break;
+    }
+    case 'story-create': {
+      const fileInput = form.querySelector('input[type="file"]');
+      const file = fileInput?.files?.[0];
+      if (!file) { toast('Choisis une photo ou vidéo'); return; }
+      toast('Upload story…');
+      await Social.createStory({ file });
+      toast('Story publiée pour 24h ✓');
+      location.hash = '#/feed';
+      break;
+    }
+    case 'comment-create': {
+      const postId = form.getAttribute('data-post');
+      await Social.createComment(postId, data.text);
+      form.reset();
+      render();
+      break;
+    }
+    case 'dm-send': {
+      const channel = form.getAttribute('data-channel');
+      await Social.sendDM(channel, data.text);
+      form.reset();
+      render();
+      break;
+    }
+    case 'profile-edit': {
+      const u = currentUser();
+      const patch = {
+        bio: data.bio || null,
+        isPrivate: !!data.isPrivate,
+      };
+      const avatarFile = form.querySelector('input[name="avatar"]')?.files?.[0];
+      if (avatarFile) {
+        const { url } = await Social.uploadMedia(avatarFile, 'avatars');
+        patch.avatarUrl = url;
+      }
+      await db.update('users', u.id, patch);
+      toast('Profil mis à jour ✓');
+      location.hash = '#/profil/' + u.username;
+      break;
+    }
+
     case 'candidature': {
       await db.insert('candidatures', {
         firstName: data.firstName, lastName: data.lastName,
@@ -1901,6 +2047,7 @@ async function handleSubmit(kind, data, form) {
           firstName: data.firstName, lastName: data.lastName,
           email: data.email, section: data.section || null,
           role: data.role, incorporation: data.incorporation || null,
+          accountType: data.accountType || 'user',
           active: !!data.active,
         });
         toast('Utilisateur mis à jour');
@@ -1912,6 +2059,9 @@ async function handleSubmit(kind, data, form) {
           section: data.section || null,
           incorporation: data.incorporation || null,
         });
+        if (data.accountType && data.accountType !== 'user') {
+          await db.update('users', u.id, { accountType: data.accountType }, { silent: true });
+        }
         showResetPasswordModal(u, initialPassword);
       }
       break;

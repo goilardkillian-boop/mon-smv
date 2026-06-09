@@ -22,6 +22,12 @@ const TABLES = {
   notes: 'notes',
   messages: 'messages',
   auditLog: 'audit_log',
+  // Réseau social
+  posts: 'posts',
+  comments: 'comments',
+  reactions: 'reactions',
+  stories: 'stories',
+  berealRounds: 'bereal_rounds',
 };
 
 export const COLLECTIONS = Object.keys(TABLES);
@@ -67,7 +73,8 @@ function notify() { for (const l of listeners) try { l(); } catch (e) { console.
 
 /* -------- Chargement initial (à appeler après auth) -------- */
 const PUBLIC_TABLES = ['news', 'sections', 'incorporations', 'formations']; // accessible aussi en anon
-const AUTH_TABLES = ['users', 'jobs', 'candidatures', 'invitations', 'events', 'notes', 'messages', 'auditLog'];
+const AUTH_TABLES = ['users', 'jobs', 'candidatures', 'invitations', 'events', 'notes', 'messages', 'auditLog',
+                     'posts', 'comments', 'reactions', 'stories', 'berealRounds'];
 
 export async function loadAll({ authenticated = false } = {}) {
   const toLoad = authenticated ? [...PUBLIC_TABLES, ...AUTH_TABLES] : PUBLIC_TABLES;

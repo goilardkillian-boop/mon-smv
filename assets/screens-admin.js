@@ -87,6 +87,11 @@ export function adminDashboard(user) {
     <h1 class="admin-h1">Tableau de <em>bord</em></h1>
     <p class="admin-sub">${db.getSettings().centreNom}</p>
 
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px;">
+      <a class="btn btn--ghost-ink btn--sm" href="#/feed">${ICONS.home}<span>Voir le feed</span></a>
+      <button class="btn btn--fluo btn--sm" data-action="bereal-trigger">⏱<span>Déclencher BeReal · 2 min</span></button>
+    </div>
+
     <div class="admin-grid">
       <div class="admin-kpi">
         <div class="admin-kpi__lbl">Volontaires</div>
@@ -229,13 +234,23 @@ export function adminUserForm(user, idOrNew, form = null) {
             </select>
             <div class="admin-field__hint">Les comptes "famille" sont créés sur invitation par le jeune.</div>
           </div>
-          <div class="admin-field" data-section-wrap>
-            <label class="admin-field__label">Section</label>
-            <select class="admin-field__select" name="section">
-              <option value="">—</option>
-              ${['S11','S12','S13','S21','S22','S23'].map((s) => `<option value="${s}" ${f.section === s ? 'selected' : ''}>${s}</option>`).join('')}
+          <div class="admin-field">
+            <label class="admin-field__label">Type de compte</label>
+            <select class="admin-field__select" name="accountType">
+              <option value="user" ${f.accountType === 'user' || !f.accountType ? 'selected' : ''}>Utilisateur normal</option>
+              <option value="section" ${f.accountType === 'section' ? 'selected' : ''}>Compte de section (COM)</option>
+              <option value="com" ${f.accountType === 'com' ? 'selected' : ''}>Cellule communication</option>
+              <option value="official" ${f.accountType === 'official' ? 'selected' : ''}>Compte officiel</option>
             </select>
+            <div class="admin-field__hint">Les comptes "section" / "COM" peuvent publier au nom du régiment.</div>
           </div>
+        </div>
+        <div class="admin-field" data-section-wrap>
+          <label class="admin-field__label">Section</label>
+          <select class="admin-field__select" name="section">
+            <option value="">—</option>
+            ${['S11','S12','S13','S21','S22','S23'].map((s) => `<option value="${s}" ${f.section === s ? 'selected' : ''}>${s}</option>`).join('')}
+          </select>
         </div>
 
         <div class="admin-field--row">
