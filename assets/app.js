@@ -1183,6 +1183,20 @@ function resolve() {
     return resolve();
   }
 
+  // Anciennes routes "jeune dashboard" → redirection vers le feed social
+  // (pour les utilisateurs qui ont d'anciens liens en favoris)
+  const LEGACY_REDIRECTS = {
+    'accueil': '#/feed',
+    'tchat': '#/feed',
+    'emploi': '#/feed',
+    'famille/photos': '#/feed',
+    'famille/tchat': '#/dm',
+  };
+  if (LEGACY_REDIRECTS[route] && (user.role === 'jeune' || user.role === 'famille' || user.role === 'cadre')) {
+    location.hash = LEGACY_REDIRECTS[route];
+    return resolve();
+  }
+
   if (route === 'auth/changer-mdp') return screenChangePassword(true);
 
   // Public toujours accessibles
